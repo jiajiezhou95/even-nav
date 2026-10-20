@@ -115,3 +115,16 @@ Official Device APIs page also labels IMU generically as accelerometer/gyroscope
 - STATIC/BUILD PASS: TypeScript, production build and privacy scan (111 files). Phone synthetic screenshots visually reviewed for expanded steps, large icon, separator and corner GPS status.
 - DEPLOYED: private Beta 0.1.5 build 116688, 75,419 bytes. Downloaded cloud artifact matches SHA256 `d98aae386303c11320d37e3a477fb0c47a1a8c5fbb271243c2c7a202ce11d6ca`. Public channel remains unset.
 - No Worker deployment or Google/Transitous calls. Existing provider evidence reused. G2 optical layout/movement, head-facing calibration and lock-screen acceptance remain unverified on hardware.
+
+### Beta 0.1.6 requested delta
+
+User explicitly requests retaining the last remaining-meter values while awaiting a fresh location, with a blinking corner dot and '更新定位中' that disappears on recovery. Preserve core stale-fix progress guards: displayed retained values do not imply a new measurement. Native requested location cadence remains 1000 ms with distanceFilter 0; freshness thresholds remain WALK/TRANSIT 5 s and DRIVE 3 s. This is unrelated to Google quota; location and distance updates are local, while new map views and route requests use provider services.
+
+User also authorized a bounded G2 XYZ capture. Manual diagnostics use the public IMU API after startup-page creation, collect only XYZ/receive-time/action labels in memory, automatically stop after at most 60 seconds and allow local export. No GPS, private routes, authentication values or network upload. This is a measurement tool, not a compass or calibration implementation; actual hardware sampling remains a user-only gate.
+
+### Beta 0.1.6 delivery checkpoint
+
+- TARGETED_TEST PASS: guidance/device 18 tests, IMU helper 8 tests, affected browser UI 3 tests (retained stale distance/blink/recovery, normal guidance, local IMU phases/export/close-stop). Mock SDK/synthetic evidence only; real IMU data NOT RUN.
+- STATIC/BUILD PASS: TypeScript, diff check, production build and privacy scan (113 files). Status-only G2 refresh deduplicates identical map/icon data; actual BLE blink cadence is hardware-dependent.
+- DEPLOYED: private Beta 0.1.6 build 116702, 77,787 bytes; cloud download SHA256 matches `f63a88551ed8556ba29509b4dda42e2927df18e840554fe7a55a7c9d276ff5c5`. Public channel unset. No Worker deploy or Google/Transitous calls.
+- Hardware next: end navigation; settings > sensor capture, phone fixed, select each action phase and hold/perform about 5 seconds; stop and export/copy local XYZ JSON. Optional phone-only rotation is a source-isolation control. No claim of calibrated heading or lockscreen acceptance.

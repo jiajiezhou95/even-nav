@@ -15,16 +15,18 @@ import {
 import { WorkerClient } from "./client";
 import { EvenDevice, type DeviceFix } from "./device";
 import { NavigationMap } from "./map";
-import { staleInstruction, staleThreshold } from "./freshness";
+import { staleThreshold } from "./freshness";
 import { createCredentialStore, DeviceCredentials } from "./credentials";
 import {
   conciseInstruction,
   currentStepDetail,
   guidanceView,
+  hudStatus,
   type ManeuverIcon,
 } from "./guidance";
 import { maneuverSvg, maneuverPng } from "./maneuver-icons";
 import { movementBearingFromHistory } from "./direction";
+import { createImuProbe, type ImuProbePhase } from "./imu-probe";
 import packageInfo from "../../../package.json";
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string) =>
@@ -55,6 +57,9 @@ const client = new WorkerClient(),
   session = new NavigationSession({ staleMs: 5000 }),
   map = new NavigationMap(client);
 const credentials = new DeviceCredentials(client, createCredentialStore());
+let imuProbe: ReturnType<typeof createImuProbe> | undefined;
+let imuStarting = false;
+let imuEpoch = 0;
 let authBusy = true;
 let credentialStatus = "正在检查此设备的配对状态…";
 let destination: EndpointCandidate | undefined,
@@ -129,6 +134,23 @@ $("#app").innerHTML = `
     <p id="credential-status" class="small muted" aria-live="polite"></p>
     <button id="connect-backend" class="primary wide">首次配对并连接</button><button id="retry-backend" class="secondary wide">重试已保存的连接</button><button id="forget-backend" class="secondary wide danger">断开并忘记此设备</button><button id="connect-device" class="secondary wide">连接 Even App / G2</button>
     <button id="browser-location" class="text-button wide">启用浏览器开发定位</button><p class="small muted">开发定位不等于 Even GPS、G2 显示或锁屏持续导航。</p>
+    <section class="imu-controls" aria-label="眼镜传感器采样"><h3>眼镜传感器采样</h3><p class="small muted">手机放稳；仅采样，不用于导航朝向。最多 60 秒，结果仅留在本页。</p>
+    <button id="imu-start" class="secondary">开始采样</button><button id="imu-stop" class="secondary" disabled>停止采样</button>
+    <div class="imu-phases">${Object.entries({
+      still: "静止",
+      left: "向左转头",
+      right: "向右转头",
+      nod: "点头",
+      tilt: "侧倾",
+      phone: "仅转动手机",
+    })
+      .map(
+        ([phase, label]) =>
+          `<button data-imu-phase="${phase}" aria-pressed="${phase === "still"}">${label}</button>`,
+      )
+      .join("")}</div>
+    <p id="imu-stats" class="small" aria-live="polite">尚未采样</p>
+    <div id="imu-export" hidden><button id="imu-download" class="text-button">下载采样 JSON</button><label for="imu-report">本机采样结果（也可长按全选复制）</label><textarea id="imu-report" readonly rows="5"></textarea></div></section>
   </dialog>
   <dialog id="manual"><form method="dialog"><div class="dialog-heading"><h2>手动输入目的地</h2><button aria-label="关闭手动输入" class="icon-button">×</button></div></form>
     <label for="manual-input">完整地址或 纬度, 经度</label><input id="manual-input" placeholder="例如：35.6812, 139.7671"><p class="small muted">坐标按 WGS84 纬度在前。地址补全仅在提交时请求。</p><button id="manual-submit" class="primary wide">确认输入</button>
@@ -136,6 +158,7 @@ $("#app").innerHTML = `
 $("#map-host").append(map.canvas);
 
 function renderHealth() {
+  renderImu();
   $("#health").innerHTML =
     `<span><i class="${client.configured ? "ok" : ""}"></i>${escape(backend)}</span><span><i class="${device.connected ? "ok" : ""}"></i>${escape(health)}</span>`;
   $("#credential-status").textContent = credentialStatus;
@@ -182,7 +205,7 @@ function itinerary(route: Route) {
 }
 function guidanceMarkup(state = session.snapshot) {
   const view = guidanceView(state, mode);
-  return `<div class="guidance-current"><span id="nav-current-icon" class="maneuver-icon" data-icon="${view.icon}" aria-hidden="true">${maneuverSvg(view.icon)}</span><span><span id="nav-current-text">${escape(view.action)}</span><span id="nav-step-distance" class="${view.stale ? "distance-unavailable" : ""}">${escape(view.distance || "")}</span></span></div><div id="nav-next" class="guidance-next" ${view.next ? "" : "hidden"}><span class="next-label">下一步</span><span id="nav-next-icon" class="maneuver-icon" data-icon="${view.nextIcon || "none"}" aria-hidden="true">${maneuverSvg(view.nextIcon || "none")}</span><span id="nav-next-text">${escape(view.next || "")}</span></div>`;
+  return `<div class="guidance-current"><span id="nav-current-icon" class="maneuver-icon" data-icon="${view.icon}" aria-hidden="true">${maneuverSvg(view.icon)}</span><span><span id="nav-current-text">${escape(view.action)}</span><span id="nav-step-distance" >${escape(view.distance || "")}</span></span></div><div id="nav-next" class="guidance-next" ${view.next ? "" : "hidden"}><span class="next-label">下一步</span><span id="nav-next-icon" class="maneuver-icon" data-icon="${view.nextIcon || "none"}" aria-hidden="true">${maneuverSvg(view.nextIcon || "none")}</span><span id="nav-next-text">${escape(view.next || "")}</span></div>`;
 }
 function updateIcon(selector: string, icon: ManeuverIcon) {
   const element = $(selector);
@@ -195,18 +218,13 @@ function updateNavigationTelemetry(state = session.snapshot) {
   const view = guidanceView(state, mode);
   $("#nav-current-text").textContent = view.action;
   $("#nav-step-distance").textContent = view.distance || "";
-  $("#nav-step-distance").className = view.stale ? "distance-unavailable" : "";
   $("#nav-next").hidden = !view.next;
   $("#nav-next-text").textContent = view.next || "";
   updateIcon("#nav-current-icon", view.icon);
   updateIcon("#nav-next-icon", view.nextIcon || "none");
   $("#current-step-detail").textContent = currentStepDetail(state);
-  $("#nav-distance").textContent = view.stale
-    ? "—"
-    : distance(state.remainingMeters);
-  $("#nav-fix").textContent =
-    `${state.paused ? "已暂停" : view.stale ? "定位过期" : "GPS"} · ${state.location ? time(state.location.timestamp) : "未知"}`;
-  $("#nav-fix").className = `gps-status ${view.stale ? "warning" : "muted"}`;
+  $("#nav-distance").textContent = distance(state.remainingMeters);
+  $("#nav-fix").hidden = !view.stale;
   $("#nav-replan").hidden = !state.replanNeeded;
 }
 function render() {
@@ -301,8 +319,8 @@ function render() {
   if (["NAVIGATING", "ARRIVED"].includes(state.phase)) {
     const leg = state.route?.legs[state.legIndex];
     const view = guidanceView(state, mode);
-    html += `<section class="panel navigation"><div class="section-label"><span>${state.phase === "ARRIVED" ? "到达附近" : state.paused ? "已暂停" : "03 / 导航中"}</span><span>${device.source === "BROWSER_DEV" ? "浏览器开发预览" : "Even 手机定位"}</span></div><div id="nav-instruction" role="heading" aria-level="2">${guidanceMarkup(state)}</div><div class="big-distance"><strong id="nav-distance">${view.stale ? "—" : distance(state.remainingMeters)}</strong><span>总剩余距离</span></div>
-      <p id="nav-fix" class="gps-status ${view.stale ? "warning" : "muted"}">${state.paused ? "已暂停" : view.stale ? "定位过期" : "GPS"} · ${state.location ? time(state.location.timestamp) : "未知"}</p>
+    html += `<section class="panel navigation"><div class="section-label"><span>${state.phase === "ARRIVED" ? "到达附近" : state.paused ? "已暂停" : "03 / 导航中"}</span><span>${device.source === "BROWSER_DEV" ? "浏览器开发预览" : "Even 手机定位"}</span></div><div id="nav-instruction" role="heading" aria-level="2">${guidanceMarkup(state)}</div><div class="big-distance"><strong id="nav-distance">${distance(state.remainingMeters)}</strong><span>总剩余距离</span></div>
+      <p id="nav-fix" class="gps-status warning" ${view.stale ? "" : "hidden"}><span class="location-dot" aria-hidden="true"></span>更新定位中</p>
       <p id="nav-replan" class="warning" ${state.replanNeeded ? "" : "hidden"}>检测到偏航、路线过期或错过发车，请重新规划。</p>
       <div class="nav-actions"><button id="pause" class="secondary">${state.paused ? "继续" : "暂停"}</button><button id="replan" class="secondary">重新规划</button><button id="end" class="secondary danger">结束</button></div>
       ${mode === "TRANSIT" && !state.paused ? `<div class="transit-actions">${leg?.mode === "WAIT" || (leg?.mode === "RIDE" && !state.boarded) ? '<button data-transit="BOARDED" class="secondary">已上车</button>' : ""}${leg?.mode === "RIDE" && state.boarded ? '<button data-transit="ALIGHTED" class="secondary">已下车</button>' : ""}${leg?.mode === "TRANSFER" ? '<button data-transit="TRANSFER_COMPLETED" class="secondary">已完成换乘</button>' : ""}</div>` : ""}
@@ -572,6 +590,11 @@ async function plan() {
 }
 async function start() {
   if (busy) return;
+  if (imuBlocksNavigation()) {
+    notice = "请先停止传感器采样，再开始导航。";
+    render();
+    return;
+  }
   const version = session.snapshot.version,
     routeId = selected;
   let started = false;
@@ -624,6 +647,7 @@ function onFix(value: DeviceFix) {
   }
 }
 async function stopNavigation(close: boolean) {
+  if (close) await imuProbe?.stop();
   if (tick) clearInterval(tick);
   tick = undefined;
   device.setVersion(session.snapshot.version + 1);
@@ -631,6 +655,7 @@ async function stopNavigation(close: boolean) {
   if (close) await device.close();
 }
 async function handleAction(action: "PAUSE" | "RESUME" | "END") {
+  if (action === "RESUME" && imuBlocksNavigation()) return;
   try {
     if (action === "END") {
       session.end();
@@ -747,7 +772,7 @@ async function drawMap() {
         pixels,
         icon: { key: icon, pixels: iconPixels },
         instruction: instruction(state),
-        status: `${state.paused ? "已暂停" : staleInstruction(state.location?.timestamp, mode) ? "定位过期 · 距离不可用" : `总剩余 ${distance(state.remainingMeters)}`}\nGPS ${state.location ? time(state.location.timestamp) : "未知"}`,
+        status: hudStatus(state, mode),
         attribution: map.attribution,
       });
     }
@@ -947,6 +972,97 @@ async function restoreCredentials() {
     render();
   }
 }
+function imuBlocksNavigation() {
+  const state = imuProbe?.snapshot();
+  return (
+    imuStarting ||
+    state?.status === "starting" ||
+    state?.status === "recording" ||
+    Boolean(state?.mayBeEnabled)
+  );
+}
+function renderImu() {
+  const state = imuProbe?.snapshot();
+  const active = imuBlocksNavigation();
+  $<HTMLButtonElement>("#imu-start").disabled =
+    active ||
+    busy ||
+    ["NAVIGATING", "ARRIVED"].includes(session.snapshot.phase);
+  $<HTMLButtonElement>("#imu-stop").disabled = !active;
+  if (!state) return;
+  const last = state.samples.at(-1);
+  $("#imu-stats").textContent = state.error
+    ? `采样操作未完成${state.mayBeEnabled ? "；IMU 可能仍在运行，请重试停止" : "，请检查 G2 连接"}。`
+    : `${{ idle: "尚未采样", starting: "正在启动", recording: "正在采样", stopped: "已停止", error: "采样错误" }[state.status]} · ${state.summary.count} 条${last ? ` · X ${last.x.toFixed(3)} / Y ${last.y.toFixed(3)} / Z ${last.z.toFixed(3)}` : ""}`;
+  $("#imu-export").hidden = active || !state.samples.length;
+  if (!active)
+    $<HTMLTextAreaElement>("#imu-report").value = JSON.stringify(
+      state,
+      null,
+      2,
+    );
+  document
+    .querySelectorAll<HTMLButtonElement>("[data-imu-phase]")
+    .forEach((button) =>
+      button.setAttribute(
+        "aria-pressed",
+        String(button.dataset.imuPhase === state.phase),
+      ),
+    );
+}
+$("#imu-start").onclick = async () => {
+  if (
+    imuBlocksNavigation() ||
+    busy ||
+    ["NAVIGATING", "ARRIVED"].includes(session.snapshot.phase)
+  )
+    return;
+  imuStarting = true;
+  renderImu();
+  const epoch = lifecycleEpoch,
+    probeEpoch = ++imuEpoch;
+  try {
+    const bridge = await device.prepareImuProbe();
+    if (epoch !== lifecycleEpoch || probeEpoch !== imuEpoch || pageSuspended)
+      return;
+    imuProbe = createImuProbe({ bridge, onChange: renderImu });
+    await imuProbe.start();
+  } catch {
+    $("#imu-stats").textContent =
+      "采样未启动，请在 Even App 内连接 G2 后重试。";
+  } finally {
+    imuStarting = false;
+    renderImu();
+  }
+};
+$("#imu-stop").onclick = async () => {
+  imuEpoch++;
+  await imuProbe?.stop();
+  renderImu();
+};
+document
+  .querySelectorAll<HTMLButtonElement>("[data-imu-phase]")
+  .forEach(
+    (button) =>
+      (button.onclick = () =>
+        imuProbe?.setPhase(button.dataset.imuPhase as ImuProbePhase)),
+  );
+$("#imu-download").onclick = () => {
+  if (imuBlocksNavigation()) return;
+  const json = $<HTMLTextAreaElement>("#imu-report").value;
+  const url = URL.createObjectURL(
+    new Blob([json], { type: "application/json" }),
+  );
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "even-nav-imu-sample.json";
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+$("#settings").addEventListener("close", () => {
+  imuEpoch++;
+  void imuProbe?.stop();
+});
 $("#connect-device").onclick = async () => {
   try {
     await device.connect();
@@ -1006,6 +1122,7 @@ map.canvas.onclick = (event) => {
   });
 };
 window.addEventListener("pagehide", () => {
+  void imuProbe?.stop();
   pageSuspended = true;
   lifecycleEpoch++;
   lifecycleStop = stopNavigation(false).catch(report);

@@ -139,7 +139,7 @@ export function guidanceView(
     action,
     icon,
     stale,
-    distance: stale ? "距离暂不可用" : `本段剩余 ${distance}`,
+    distance: `本段剩余 ${distance}`,
     next,
     nextIcon: next ? iconForManeuver(nextManeuver) : undefined,
   };
@@ -157,4 +157,20 @@ export function currentStepDetail(state: NavigationState): string {
   return (
     state.route?.legs[state.legIndex]?.steps[state.stepIndex]?.instruction || ""
   );
+}
+
+/** Existing tick drives the dot; retained numbers are never extrapolated. */
+export function hudStatus(
+  state: NavigationState,
+  mode: Mode,
+  now = Date.now(),
+): string {
+  const meters = Math.max(0, state.remainingMeters);
+  const total = `总剩余 ${meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${Math.round(meters)} m`}`;
+  if (state.paused) return `${total}\n已暂停`;
+  if (state.phase === "ARRIVED") return `${total}\n已到达`;
+  if (state.phase !== "NAVIGATING") return total;
+  return guidanceView(state, mode, now).stale
+    ? `${total}\n${Math.floor(now / 1000) % 2 ? "●" : " "} 更新定位中`
+    : total;
 }

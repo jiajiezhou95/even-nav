@@ -87,6 +87,64 @@ describe("official SDK boundary and display queue", () => {
       ]),
     });
   });
+  it("blinks status without re-uploading identical map or icon bytes", async () => {
+    const bridge = {
+      createStartUpPageContainer: vi.fn(async () => 0),
+      textContainerUpgrade: vi.fn(async () => true),
+      updateImageRawData: vi.fn(async () => "success"),
+    };
+    const device = new EvenDevice(
+      () => {},
+      () => {},
+      () => {},
+    );
+    Object.assign(device, { bridge, connected: true, source: "EVEN" });
+    const frame = {
+      sequence: 1,
+      version: 0,
+      pixels: new Uint8Array([1, 2]),
+      icon: { key: "straight", pixels: new Uint8Array([3]) },
+      instruction: "直行\n本段剩余 80 m",
+      status: "● 更新定位中",
+      attribution: "Synthetic",
+    };
+    device.queue.push(frame);
+    await vi.waitFor(() => expect(device.lastSubmission?.sequence).toBe(1));
+    device.queue.push({
+      ...frame,
+      sequence: 2,
+      pixels: new Uint8Array([1, 2]),
+      status: "  更新定位中",
+    });
+    await vi.waitFor(() => expect(device.lastSubmission?.sequence).toBe(2));
+    expect(bridge.updateImageRawData).toHaveBeenCalledTimes(2);
+    expect(bridge.textContainerUpgrade).toHaveBeenCalledTimes(4);
+  });
+  it("requires successful startup page before exposing IMU controls, without GPS", async () => {
+    const bridge = {
+      createStartUpPageContainer: vi.fn(async () => 1),
+      getAppLocation: vi.fn(),
+      imuControl: vi.fn(),
+      onEvenHubEvent: vi.fn(),
+    };
+    const device = new EvenDevice(
+      () => {},
+      () => {},
+      () => {},
+    );
+    Object.assign(device, { bridge, connected: true, source: "EVEN" });
+    await expect(device.prepareImuProbe()).rejects.toThrow("G2 容器创建失败");
+    expect(bridge.imuControl).not.toHaveBeenCalled();
+    bridge.createStartUpPageContainer.mockResolvedValue(0);
+    const [one, two] = await Promise.all([
+      device.prepareImuProbe(),
+      device.prepareImuProbe(),
+    ]);
+    expect(one).toBe(bridge);
+    expect(two).toBe(bridge);
+    expect(bridge.createStartUpPageContainer).toHaveBeenCalledTimes(2);
+    expect(bridge.getAppLocation).not.toHaveBeenCalled();
+  });
   it("coalesces concurrent native starts and awaits pending start before stopping", async () => {
     let release!: (value: boolean) => void;
     const unsubscribe = vi.fn();

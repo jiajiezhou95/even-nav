@@ -1237,15 +1237,76 @@ test("failed return location pauses visibly and explicit resume restores ticks",
   await expect(
     page.getByRole("button", { name: "暂停", exact: true }),
   ).toBeVisible();
+  const stepDistance = await page.locator("#nav-step-distance").textContent();
+  const tripDistance = await page.locator("#nav-distance").textContent();
+  await expect(page.locator("#nav-fix")).toBeHidden();
   await page.clock.runFor(6000);
   await expect(page.locator("#nav-current-text")).toHaveText("沿路线前行");
-  await expect(page.locator("#nav-fix")).toContainText("定位过期");
-  await expect(page.locator("#nav-step-distance")).toHaveText("距离暂不可用");
+  await expect(page.locator("#nav-fix")).toContainText("更新定位中");
+  await expect(page.locator("#nav-step-distance")).toHaveText(stepDistance!);
   expect(
     await page
       .locator("#nav-fix")
       .evaluate((el) => getComputedStyle(el).textAlign),
   ).toBe("right");
-  await expect(page.locator("#nav-distance")).toHaveText("—");
-  await expect(page.locator("#nav-instruction")).not.toContainText("本段剩余");
+  await expect(page.locator("#nav-distance")).toHaveText(tripDistance!);
+  await expect(page.locator("#nav-instruction")).toContainText("本段剩余");
+  expect(
+    await page
+      .locator(".location-dot")
+      .evaluate((el) => getComputedStyle(el).animationName),
+  ).toBe("location-blink");
+  await page.getByRole("button", { name: "暂停", exact: true }).click();
+  await expect(page.locator("#nav-fix")).toBeHidden();
+  await page.getByRole("button", { name: "继续", exact: true }).click();
+  await expect(page.locator("#nav-fix")).toBeHidden();
+});
+
+test("local IMU settings capture selected phase and export without location or provider calls", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.evaluate(async () => {
+    const path = "/src/device.ts";
+    const { EvenDevice } = await import(path);
+    let listener: ((event: unknown) => void) | undefined;
+    const calls: boolean[] = [];
+    (window as any).imuCalls = calls;
+    (window as any).emitImu = (x: number) =>
+      listener?.({ sysEvent: { eventType: 8, imuData: { x, y: 2, z: 3 } } });
+    EvenDevice.prototype.prepareImuProbe = async () => ({
+      imuControl: async (enabled: boolean) => {
+        calls.push(enabled);
+        return true;
+      },
+      onEvenHubEvent: (callback: (event: unknown) => void) => {
+        listener = callback;
+        return () => {
+          listener = undefined;
+        };
+      },
+    });
+  });
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "开始采样", exact: true }).click();
+  await expect(page.locator("#imu-stats")).toContainText("正在采样");
+  await page.getByRole("button", { name: "向左转头", exact: true }).click();
+  await page.evaluate(() => (window as any).emitImu(1));
+  await expect(page.locator("#imu-stats")).toContainText("1 条");
+  await page.getByRole("button", { name: "停止采样", exact: true }).click();
+  await expect(page.locator("#imu-report")).toBeVisible();
+  const result = JSON.parse(await page.locator("#imu-report").inputValue());
+  expect(result.samples[0]).toMatchObject({ phase: "left", x: 1, y: 2, z: 3 });
+  expect(JSON.stringify(result)).not.toMatch(
+    /latitude|longitude|coordinate|token|heading/,
+  );
+  expect(await page.evaluate(() => (window as any).imuCalls)).toEqual([
+    true,
+    false,
+  ]);
+  await page.getByRole("button", { name: "开始采样", exact: true }).click();
+  await page.getByRole("button", { name: "关闭设置", exact: true }).click();
+  await expect
+    .poll(() => page.evaluate(() => (window as any).imuCalls))
+    .toEqual([true, false, true, false]);
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { NavigationSession } from "../../../packages/core/src/navigation";
 import type { Route } from "../../../packages/contracts/src/index";
-import { conciseInstruction, currentStepDetail } from "./guidance";
+import { conciseInstruction, currentStepDetail, hudStatus } from "./guidance";
 
 const now = 1800000000000;
 const points = [0, 1, 2, 3].map((i) => ({ lat: 35, lng: 139 + i * 0.001 }));
@@ -74,13 +74,24 @@ describe("compact structured navigation guidance", () => {
     );
     expect(currentStepDetail(session.snapshot)).toBe("未来步骤原文1");
   });
-  it("retains planned action while marking stale distance unavailable, never interpolating", () => {
+  it("retains planned action and last meters while blinking status only, never interpolating", () => {
     const state = start().snapshot;
     const stale = conciseInstruction(state, "WALK", now + 5001);
     expect(stale).toContain("直行");
-    expect(stale).toContain("距离暂不可用");
+    expect(stale).toBe(conciseInstruction(state, "WALK", now));
+    expect(hudStatus(state, "WALK", now + 5001)).toContain("● 更新定位中");
+    expect(hudStatus(state, "WALK", now + 6001)).toContain("  更新定位中");
+    expect(hudStatus(state, "WALK", now)).not.toContain("更新定位中");
     expect(stale).toContain("下一步：向右转");
-    expect(stale).not.toMatch(/本段剩余| m|定位已过期/);
+    expect(stale).toContain("本段剩余");
+    state.paused = true;
+    expect(hudStatus(state, "WALK", now + 6001)).not.toContain("更新定位中");
+    state.paused = false;
+    state.phase = "ARRIVED";
+    expect(hudStatus(state, "WALK", now + 6001)).not.toContain("更新定位中");
+    state.phase = "ENDED";
+    expect(hudStatus(state, "WALK", now + 6001)).not.toContain("更新定位中");
+    state.phase = "NAVIGATING";
     state.paused = true;
     expect(conciseInstruction(state, "WALK", now)).toBe("导航已暂停");
   });

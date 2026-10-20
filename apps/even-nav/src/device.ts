@@ -100,6 +100,9 @@ export class EvenDevice {
   private locationStopping?: Promise<void>;
   private pageCreated = false;
   private iconKey?: string;
+  private mapPixels?: Uint8Array;
+  private pageStarting?: Promise<void>;
+  private textValues = new Map<number, string>();
   private version = 0;
   connected = false;
   source: "EVEN" | "BROWSER_DEV" | "NONE" = "NONE";
@@ -114,72 +117,7 @@ export class EvenDevice {
       async (frame) => {
         if (frame.version !== this.version || !this.bridge || !this.connected)
           return;
-        if (!this.pageCreated) {
-          const result = await this.bridge.createStartUpPageContainer(
-            new CreateStartUpPageContainer({
-              containerTotalNum: 5,
-              imageObject: [
-                new ImageContainerProperty({
-                  containerID: 1,
-                  containerName: "map",
-                  xPosition: 0,
-                  yPosition: 0,
-                  width: 288,
-                  height: 144,
-                }),
-                new ImageContainerProperty({
-                  containerID: 5,
-                  containerName: "maneuver",
-                  xPosition: 300,
-                  yPosition: 0,
-                  width: 48,
-                  height: 48,
-                }),
-              ],
-              textObject: [
-                new TextContainerProperty({
-                  containerID: 2,
-                  containerName: "instruction",
-                  xPosition: 360,
-                  yPosition: 0,
-                  width: 216,
-                  height: 144,
-                  content: "准备导航",
-                  isEventCapture: 1,
-                }),
-                new TextContainerProperty({
-                  containerID: 3,
-                  containerName: "status",
-                  xPosition: 300,
-                  yPosition: 150,
-                  width: 276,
-                  height: 54,
-                  content: "定位时间未知",
-                  isEventCapture: 0,
-                }),
-                new TextContainerProperty({
-                  containerID: 4,
-                  containerName: "attribution",
-                  xPosition: 0,
-                  yPosition: 208,
-                  width: 576,
-                  height: 80,
-                  content: " ",
-                  isEventCapture: 0,
-                }),
-              ],
-              menuObject: new MenuContainerProperty({
-                menuItems: [
-                  new MenuItemProperty({ itemID: 1, itemName: "暂停" }),
-                  new MenuItemProperty({ itemID: 2, itemName: "继续" }),
-                  new MenuItemProperty({ itemID: 3, itemName: "结束" }),
-                ],
-              }),
-            }),
-          );
-          if (result !== 0) throw new Error("G2 容器创建失败");
-          this.pageCreated = true;
-        }
+        await this.ensurePage();
         if (frame.version !== this.version || !this.connected) return;
         // Text and both images share one serialized queue; submission is not optical proof.
         for (const [id, name, content] of [
@@ -188,6 +126,7 @@ export class EvenDevice {
           [4, "attribution", frame.attribution],
         ] as const) {
           if (frame.version !== this.version || !this.connected) return;
+          if (this.textValues.get(id) === content) continue;
           if (
             !(await this.bridge.textContainerUpgrade(
               new TextContainerUpgrade({
@@ -200,6 +139,7 @@ export class EvenDevice {
             ))
           )
             throw new Error("G2 文字发送失败");
+          this.textValues.set(id, content);
         }
         if (frame.version !== this.version || !this.connected) return;
         if (frame.icon && frame.icon.key !== this.iconKey) {
@@ -214,13 +154,18 @@ export class EvenDevice {
           this.iconKey = frame.icon.key;
         }
         if (frame.version !== this.version || !this.connected) return;
-        const result = await this.bridge.updateImageRawData(
-          new ImageRawDataUpdate({
-            containerID: 1,
-            containerName: "map",
-            imageData: Array.from(frame.pixels),
-          }),
-        );
+        const unchanged =
+          this.mapPixels?.length === frame.pixels.length &&
+          frame.pixels.every((value, i) => value === this.mapPixels![i]);
+        const result = unchanged
+          ? "success"
+          : await this.bridge.updateImageRawData(
+              new ImageRawDataUpdate({
+                containerID: 1,
+                containerName: "map",
+                imageData: Array.from(frame.pixels),
+              }),
+            );
         this.lastSubmission = {
           sequence: frame.sequence,
           at: Date.now(),
@@ -228,9 +173,95 @@ export class EvenDevice {
         };
         if (result !== "success")
           throw new Error(`G2 图像发送失败 (${result})`);
+        this.mapPixels = frame.pixels.slice();
       },
       () => this.onHealth("G2 发送失败；请检查连接并重新连接。"),
     );
+  }
+  private async ensurePage() {
+    if (this.pageCreated) return;
+    if (!this.bridge || !this.connected) throw new Error("请先连接 G2");
+    if (this.pageStarting) return this.pageStarting;
+    this.pageStarting = this.createPage();
+    try {
+      await this.pageStarting;
+    } finally {
+      this.pageStarting = undefined;
+    }
+  }
+  private async createPage() {
+    const result = await this.bridge!.createStartUpPageContainer(
+      new CreateStartUpPageContainer({
+        containerTotalNum: 5,
+        imageObject: [
+          new ImageContainerProperty({
+            containerID: 1,
+            containerName: "map",
+            xPosition: 0,
+            yPosition: 0,
+            width: 288,
+            height: 144,
+          }),
+          new ImageContainerProperty({
+            containerID: 5,
+            containerName: "maneuver",
+            xPosition: 300,
+            yPosition: 0,
+            width: 48,
+            height: 48,
+          }),
+        ],
+        textObject: [
+          new TextContainerProperty({
+            containerID: 2,
+            containerName: "instruction",
+            xPosition: 360,
+            yPosition: 0,
+            width: 216,
+            height: 144,
+            content: "准备导航",
+            isEventCapture: 1,
+          }),
+          new TextContainerProperty({
+            containerID: 3,
+            containerName: "status",
+            xPosition: 300,
+            yPosition: 150,
+            width: 276,
+            height: 54,
+            content: "定位时间未知",
+            isEventCapture: 0,
+          }),
+          new TextContainerProperty({
+            containerID: 4,
+            containerName: "attribution",
+            xPosition: 0,
+            yPosition: 208,
+            width: 576,
+            height: 80,
+            content: " ",
+            isEventCapture: 0,
+          }),
+        ],
+        menuObject: new MenuContainerProperty({
+          menuItems: [
+            new MenuItemProperty({ itemID: 1, itemName: "暂停" }),
+            new MenuItemProperty({ itemID: 2, itemName: "继续" }),
+            new MenuItemProperty({ itemID: 3, itemName: "结束" }),
+          ],
+        }),
+      }),
+    );
+    if (result !== 0) throw new Error("G2 容器创建失败");
+    this.pageCreated = true;
+  }
+  /** Diagnostic caller must hold navigation idle. No location/provider access. */
+  async prepareImuProbe(): Promise<
+    Pick<EvenAppBridge, "imuControl" | "onEvenHubEvent">
+  > {
+    await this.connect();
+    await this.ensurePage();
+    return this.bridge!;
   }
   async connect() {
     if (this.connecting) return this.connecting;
@@ -263,6 +294,9 @@ export class EvenDevice {
     this.unsubscribeDevice = this.bridge.onDeviceStatusChanged((status) => {
       this.connected = status.connectType === "connected";
       this.queue.invalidate();
+      this.mapPixels = undefined;
+      this.iconKey = undefined;
+      this.textValues.clear();
       this.onHealth(
         this.connected ? "G2 已连接" : "G2 已断开；手机继续显示导航",
       );
@@ -404,6 +438,8 @@ export class EvenDevice {
     this.bridge = undefined;
     this.pageCreated = false;
     this.iconKey = undefined;
+    this.mapPixels = undefined;
+    this.textValues.clear();
     this.connected = false;
     this.source = "NONE";
   }

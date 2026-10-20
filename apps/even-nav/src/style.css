@@ -468,10 +468,6 @@ select {
 #nav-step-distance {
   font-size: 23px;
 }
-#nav-step-distance.distance-unavailable {
-  font-size: 16px;
-  color: #946335;
-}
 .guidance-next {
   display: flex;
   align-items: center;
@@ -783,4 +779,36 @@ dialog > p {
 }
 .attribution {
   white-space: pre-line;
+}
+
+.location-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  margin-right: 6px;
+  animation: location-blink 1s steps(1, end) infinite;
+}
+@keyframes location-blink {
+  50% {
+    opacity: 0;
+  }
+}
+.imu-phases {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0;
+}
+.imu-phases button {
+  font-size: 12px;
+  padding: 8px;
+}
+.imu-phases button[aria-pressed="true"] {
+  background: #dce9c8;
+}
+#imu-report {
+  font: 11px monospace;
+  width: 100%;
 }
