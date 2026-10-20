@@ -168,3 +168,11 @@ User also authorized a bounded G2 XYZ capture. Manual diagnostics use the public
 - Start spacing14px above/16px below;360px screenshot checked, selection/start behavior unchanged.
 - 18 targeted device tests,focused spacing browser test,TypeScript,build/privacy119files PASS. Hardware restoration remains unverified; startupandimage-channel acceptance must be distinguished.
 - Private Beta build116734,77579bytes;download SHA256 matches `b2bec1e8faac201f004ded340ecfb7aa34e384c3b47cf8aaa5fe537bb80893f9`. No Worker or provider change, no live Google calls. Exact-head CI on Draft PR.
+
+
+### Beta 0.1.11 — restore proven display layout after B rejection
+
+- User hardware 0.1.10 still FAIL: `PAGE:create-invalid(1)/rebuild-invalid`. Native connection remains present; rejection precedes PNG encoding/transmission. Public SDK constraints do not establish the underlying native incompatibility.
+- Only after B startup invalid plus B rebuild rejection, try the exact 0.1.7 native layout once. If accepted, send native current/next instruction, status, full attribution, maneuver icon and an aspect-preserving map. Success reports compatibility layout explicitly; B large-map acceptance remains unresolved.
+- Current 576x192 map is letterboxed to 288x144 (288x96 content), preserving its entire geographic view. No change to route queries, location, pairing, course or zoom behavior. All-layout rejection stays latched; exceptions and capacity errors do not create retry loops.
+- 20 targeted device tests and TypeScript PASS. Actual browser canvas check verifies all edges, 24px letterboxing and rejection of malformed/wrong-size images. Package build/privacy119files PASS. Private Beta build116744,81611bytes; download SHA256 matches `60bde4cfeb95b609cfeaa0fbf608d27506431d056abd0fd4896a7286adb69e74`. Real G2 display and lockscreen navigation remain WAITING_FOR_EXTERNAL_GATE; final clean acceptance/CI waits for hardware outcome. No new Google/Transitous calls or Worker deployment.

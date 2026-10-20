@@ -9,7 +9,7 @@ import {
   validateEvenHubPageContainer,
   type EvenHubEvent,
 } from "@evenrealities/even_hub_sdk";
-import { renderHud } from "./hud-renderer";
+import { renderHud, renderCompatibilityMap } from "./hud-renderer";
 
 vi.mock("./runtime", () => ({
   isEvenHost: () => true,
@@ -20,6 +20,9 @@ vi.mock("./hud-renderer", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./hud-renderer")>();
   return {
     ...actual,
+    renderCompatibilityMap: vi.fn(
+      async (pixels: Uint8Array) => new Uint8Array([42, ...pixels]),
+    ),
     renderHud: vi.fn(async (frame) => [
       new TextEncoder().encode(`${frame.pixels[0]}/${frame.instruction}`),
       new TextEncoder().encode(
@@ -275,11 +278,11 @@ describe("official SDK boundary and display queue", () => {
         stage: "PAGE",
         code:
           code === 1
-            ? "create-invalid(1)/rebuild-invalid"
+            ? "create-invalid(1)/rebuild-invalid/compat-invalid"
             : `create-${name}(${code})`,
       });
       expect(bridge.rebuildPageContainer).toHaveBeenCalledTimes(
-        code === 1 ? 1 : 0,
+        code === 1 ? 2 : 0,
       );
       expect(device.connected).toBe(true);
       expect(health).toHaveBeenCalledWith(
@@ -298,7 +301,7 @@ describe("official SDK boundary and display queue", () => {
       await vi.waitFor(() => expect(health).toHaveBeenCalledTimes(2));
       expect(bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
       expect(bridge.rebuildPageContainer).toHaveBeenCalledTimes(
-        code === 1 ? 1 : 0,
+        code === 1 ? 2 : 0,
       );
     },
   );
@@ -367,6 +370,182 @@ describe("official SDK boundary and display queue", () => {
     );
     expect(JSON.stringify(device.lastDisplayFailure)).not.toContain("private");
     expect(bridge.updateImageRawData).not.toHaveBeenCalled();
+    expect(bridge.rebuildPageContainer).toHaveBeenCalledOnce();
+  });
+  it("restores the exact proven native layout only after B is rejected, then deduplicates native updates", async () => {
+    const bridge = {
+      createStartUpPageContainer: vi.fn(async () => 1),
+      rebuildPageContainer: vi
+        .fn(async (_page: RebuildPageContainer) => false)
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true),
+      textContainerUpgrade: vi.fn(
+        async (_value: {
+          containerID: number;
+          content: string;
+          contentOffset: number;
+          contentLength: number;
+        }) => true,
+      ),
+      updateImageRawData: vi.fn(
+        async (_value: { containerID: number; imageData: number[] }) =>
+          "success",
+      ),
+    };
+    const health = vi.fn();
+    const device = new EvenDevice(
+      () => {},
+      health,
+      () => {},
+    );
+    Object.assign(device, { bridge, connected: true, source: "EVEN" });
+    const frame = {
+      sequence: 1,
+      version: 0,
+      pixels: new Uint8Array([7]),
+      instruction: "直行\n本段剩余 120 m\n\n下一步：向右转",
+      status: "总剩余 860 m\n● 更新定位中",
+      attribution: "Google Maps · 完整版权\nFull provider attribution",
+      icon: { key: "straight", pixels: new Uint8Array([9]) },
+    };
+    device.queue.push(frame);
+    await vi.waitFor(() => expect(device.lastSubmission?.sequence).toBe(1));
+    const legacy = bridge.rebuildPageContainer.mock.calls[1][0].toJson();
+    expect(legacy).toEqual({
+      containerTotalNum: 5,
+      imageObject: [
+        {
+          containerID: 1,
+          containerName: "map",
+          xPosition: 0,
+          yPosition: 0,
+          width: 288,
+          height: 144,
+        },
+        {
+          containerID: 5,
+          containerName: "maneuver",
+          xPosition: 300,
+          yPosition: 0,
+          width: 48,
+          height: 48,
+        },
+      ],
+      textObject: [
+        {
+          containerID: 2,
+          containerName: "instruction",
+          xPosition: 360,
+          yPosition: 0,
+          width: 216,
+          height: 144,
+          content: "准备导航",
+          isEventCapture: 1,
+        },
+        {
+          containerID: 3,
+          containerName: "status",
+          xPosition: 300,
+          yPosition: 150,
+          width: 276,
+          height: 54,
+          content: "定位时间未知",
+          isEventCapture: 0,
+        },
+        {
+          containerID: 4,
+          containerName: "attribution",
+          xPosition: 0,
+          yPosition: 208,
+          width: 576,
+          height: 80,
+          content: " ",
+          isEventCapture: 0,
+        },
+      ],
+      menuObject: {
+        menuItems: [
+          { itemID: 1, itemName: "暂停" },
+          { itemID: 2, itemName: "继续" },
+          { itemID: 3, itemName: "结束" },
+        ],
+      },
+    });
+    expect(validateEvenHubPageContainer(legacy)).toEqual({ valid: true });
+    expect(
+      bridge.textContainerUpgrade.mock.calls.map(([v]) => [
+        v.containerID,
+        v.content,
+        v.contentOffset,
+        v.contentLength,
+      ]),
+    ).toEqual([
+      [2, frame.instruction, 0, 0],
+      [3, frame.status, 0, 0],
+      [4, frame.attribution, 0, 0],
+    ]);
+    expect(
+      bridge.updateImageRawData.mock.calls.map(([v]) => [
+        v.containerID,
+        v.imageData,
+      ]),
+    ).toEqual([
+      [5, [9]],
+      [1, [42, 7]],
+    ]);
+    expect(health).toHaveBeenLastCalledWith("G2 已连接，兼容布局");
+    device.queue.push({
+      ...frame,
+      sequence: 2,
+      status: "总剩余 860 m\n  更新定位中",
+    });
+    await vi.waitFor(() => expect(device.lastSubmission?.sequence).toBe(2));
+    expect(bridge.rebuildPageContainer).toHaveBeenCalledTimes(2);
+    expect(bridge.textContainerUpgrade).toHaveBeenCalledTimes(4);
+    expect(bridge.updateImageRawData).toHaveBeenCalledTimes(2);
+  });
+  it("does not send compatibility text or images when map conversion fails or the trip changes", async () => {
+    const bridge = {
+      createStartUpPageContainer: vi.fn(async () => 1),
+      rebuildPageContainer: vi
+        .fn(async () => false)
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true),
+      textContainerUpgrade: vi.fn(async () => true),
+      updateImageRawData: vi.fn(async () => "success"),
+    };
+    const health = vi.fn();
+    const device = new EvenDevice(
+      () => {},
+      health,
+      () => {},
+    );
+    Object.assign(device, { bridge, connected: true, source: "EVEN" });
+    const frame = {
+      sequence: 1,
+      version: 0,
+      pixels: new Uint8Array([1]),
+      instruction: "直行",
+      status: "",
+      attribution: "Synthetic",
+    };
+    vi.mocked(renderCompatibilityMap).mockRejectedValueOnce(
+      new Error("invalid source"),
+    );
+    device.queue.push(frame);
+    await vi.waitFor(() => expect(health).toHaveBeenCalledOnce());
+    expect(device.lastDisplayFailure?.stage).toBe("RENDER");
+    expect(bridge.textContainerUpgrade).not.toHaveBeenCalled();
+    expect(bridge.updateImageRawData).not.toHaveBeenCalled();
+    vi.mocked(renderCompatibilityMap).mockImplementationOnce(async () => {
+      device.setVersion(1);
+      return new Uint8Array([2]);
+    });
+    device.queue.push({ ...frame, sequence: 2 });
+    await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
+    expect(bridge.textContainerUpgrade).not.toHaveBeenCalled();
+    expect(bridge.updateImageRawData).not.toHaveBeenCalled();
+    expect(device.lastSubmission).toBeUndefined();
   });
   it("separates canvas failures from connectivity and clears the error only after a complete recovery frame", async () => {
     const health = vi.fn();
@@ -420,7 +599,7 @@ describe("official SDK boundary and display queue", () => {
     );
     Object.assign(device, { bridge, connected: true, source: "EVEN" });
     await expect(device.prepareImuProbe()).rejects.toThrow(
-      "G2 PAGE create-invalid(1)/rebuild-invalid",
+      "G2 PAGE create-invalid(1)/rebuild-invalid/compat-invalid",
     );
     expect(bridge.imuControl).not.toHaveBeenCalled();
     bridge.createStartUpPageContainer.mockResolvedValue(0);

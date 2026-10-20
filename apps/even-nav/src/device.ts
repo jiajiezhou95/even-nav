@@ -4,6 +4,7 @@ import {
   RebuildPageContainer,
   ImageContainerProperty,
   TextContainerProperty,
+  TextContainerUpgrade,
   MenuContainerProperty,
   MenuItemProperty,
   ImageRawDataUpdate,
@@ -14,7 +15,11 @@ import {
 import { isCoordinate, NavError } from "../../../packages/contracts/src/index";
 import type { Coordinate } from "../../../packages/contracts/src/index";
 import { getEvenBridge, isEvenHost } from "./runtime";
-import { HUD_QUADRANTS, renderHud } from "./hud-renderer";
+import {
+  HUD_QUADRANTS,
+  renderHud,
+  renderCompatibilityMap,
+} from "./hud-renderer";
 import type { GuidanceView } from "./guidance";
 
 export interface DeviceFix {
@@ -26,7 +31,7 @@ export interface DeviceFix {
 }
 export type DeviceAction = "PAUSE" | "RESUME" | "END" | "ZOOM_IN" | "ZOOM_OUT";
 export interface DisplayFailure {
-  stage: "PAGE" | "RENDER" | "IMAGE";
+  stage: "PAGE" | "RENDER" | "IMAGE" | "TEXT";
   code: string;
   containerID?: number;
   at: number;
@@ -126,6 +131,11 @@ export class EvenDevice {
   private locationStopping?: Promise<void>;
   private pageCreated = false;
   private quadrantPixels: Uint8Array[] = [];
+  private compatibilityLayout = false;
+  private compatibilityAnnounced = false;
+  private legacyMapPixels?: Uint8Array;
+  private legacyIconKey?: string;
+  private legacyTextValues = new Map<number, string>();
   private pageStarting?: Promise<void>;
   private pageFailure?: DisplayError;
   private version = 0;
@@ -146,47 +156,59 @@ export class EvenDevice {
           return;
         await this.ensurePage();
         if (frame.version !== this.version || !this.connected) return;
-        let quadrants: Uint8Array[];
-        try {
-          quadrants = await renderHud(frame);
-        } catch (error) {
-          throw new DisplayError("RENDER", exceptionCode(error));
-        }
-        // One serialized queue; check generation between every native write.
-        for (const [index, tile] of HUD_QUADRANTS.entries()) {
-          if (frame.version !== this.version || !this.connected) return;
-          const pixels = quadrants[index];
-          const previous = this.quadrantPixels[index];
-          if (
-            previous?.length === pixels.length &&
-            pixels.every((value, i) => value === previous[i])
-          )
-            continue;
-          let result;
+        if (this.compatibilityLayout) {
+          if (!(await this.sendCompatibilityFrame(frame))) return;
+        } else {
+          let quadrants: Uint8Array[];
           try {
-            result = await this.bridge.updateImageRawData(
-              new ImageRawDataUpdate({
-                containerID: tile.id,
-                containerName: tile.name,
-                imageData: Array.from(pixels),
-              }),
-            );
+            quadrants = await renderHud(frame);
           } catch (error) {
-            throw new DisplayError("IMAGE", exceptionCode(error), tile.id);
+            throw new DisplayError("RENDER", exceptionCode(error));
           }
-          if (result !== "success")
-            throw new DisplayError("IMAGE", result, tile.id);
-          if (frame.version !== this.version || !this.connected) return;
-          this.quadrantPixels[index] = pixels.slice();
+          // One serialized queue; check generation between every native write.
+          for (const [index, tile] of HUD_QUADRANTS.entries()) {
+            if (frame.version !== this.version || !this.connected) return;
+            const pixels = quadrants[index];
+            const previous = this.quadrantPixels[index];
+            if (
+              previous?.length === pixels.length &&
+              pixels.every((value, i) => value === previous[i])
+            )
+              continue;
+            let result;
+            try {
+              result = await this.bridge.updateImageRawData(
+                new ImageRawDataUpdate({
+                  containerID: tile.id,
+                  containerName: tile.name,
+                  imageData: Array.from(pixels),
+                }),
+              );
+            } catch (error) {
+              throw new DisplayError("IMAGE", exceptionCode(error), tile.id);
+            }
+            if (result !== "success")
+              throw new DisplayError("IMAGE", result, tile.id);
+            if (frame.version !== this.version || !this.connected) return;
+            this.quadrantPixels[index] = pixels.slice();
+          }
         }
         this.lastSubmission = {
           sequence: frame.sequence,
           at: Date.now(),
           result: "success",
         };
-        if (this.lastDisplayFailure) {
+        if (this.compatibilityLayout && !this.compatibilityAnnounced) {
+          this.compatibilityAnnounced = true;
           this.lastDisplayFailure = undefined;
-          this.onHealth("G2 已连接，导航画面已发送");
+          this.onHealth("G2 已连接，兼容布局");
+        } else if (this.lastDisplayFailure) {
+          this.lastDisplayFailure = undefined;
+          this.onHealth(
+            this.compatibilityLayout
+              ? "G2 已连接，兼容布局"
+              : "G2 已连接，导航画面已发送",
+          );
         }
       },
       (error) => {
@@ -204,12 +226,86 @@ export class EvenDevice {
           PAGE: "页面创建失败",
           RENDER: "画面生成失败",
           IMAGE: "图像传输失败",
+          TEXT: "文字传输失败",
         }[failure.stage];
         this.onHealth(
-          `G2 ${label} [${failure.stage}:${failure.code}${failure.containerID ? `，块 ${failure.containerID}/4` : ""}]${this.connected ? "；设备仍已连接" : "；设备已断开"}`,
+          `G2 ${label} [${failure.stage}:${failure.code}${failure.containerID ? (this.compatibilityLayout ? `，容器 ${failure.containerID}` : `，块 ${failure.containerID}/4`) : ""}]${this.connected ? "；设备仍已连接" : "；设备已断开"}`,
         );
       },
     );
+  }
+  private async sendCompatibilityFrame(frame: HudFrame): Promise<boolean> {
+    const current = () => frame.version === this.version && this.connected;
+    let mapPixels: Uint8Array;
+    try {
+      mapPixels = await renderCompatibilityMap(frame.pixels);
+    } catch (error) {
+      throw new DisplayError("RENDER", exceptionCode(error));
+    }
+    for (const [id, name, content] of [
+      [2, "instruction", frame.instruction],
+      [3, "status", frame.status],
+      [4, "attribution", frame.attribution],
+    ] as const) {
+      if (!current()) return false;
+      if (this.legacyTextValues.get(id) === content) continue;
+      let updated;
+      try {
+        updated = await this.bridge!.textContainerUpgrade(
+          new TextContainerUpgrade({
+            containerID: id,
+            containerName: name,
+            content,
+            contentOffset: 0,
+            contentLength: 0,
+          }),
+        );
+      } catch (error) {
+        throw new DisplayError("TEXT", exceptionCode(error), id);
+      }
+      if (!updated) throw new DisplayError("TEXT", "rejected", id);
+      if (!current()) return false;
+      this.legacyTextValues.set(id, content);
+    }
+    for (const [id, name, pixels, unchanged] of [
+      ...(frame.icon
+        ? [
+            [
+              5,
+              "maneuver",
+              frame.icon.pixels,
+              frame.icon.key === this.legacyIconKey,
+            ] as const,
+          ]
+        : []),
+      [
+        1,
+        "map",
+        mapPixels,
+        this.legacyMapPixels?.length === mapPixels.length &&
+          mapPixels.every((value, i) => value === this.legacyMapPixels![i]),
+      ] as const,
+    ]) {
+      if (!current()) return false;
+      if (unchanged) continue;
+      let result;
+      try {
+        result = await this.bridge!.updateImageRawData(
+          new ImageRawDataUpdate({
+            containerID: id,
+            containerName: name,
+            imageData: Array.from(pixels),
+          }),
+        );
+      } catch (error) {
+        throw new DisplayError("IMAGE", exceptionCode(error), id);
+      }
+      if (result !== "success") throw new DisplayError("IMAGE", result, id);
+      if (!current()) return false;
+      if (id === 5) this.legacyIconKey = frame.icon!.key;
+      else this.legacyMapPixels = pixels.slice();
+    }
+    return current();
   }
   private async ensurePage() {
     if (this.pageCreated) return;
@@ -225,6 +321,69 @@ export class EvenDevice {
     } finally {
       this.pageStarting = undefined;
     }
+  }
+  /** Exact native layout from the last working 55551fb (Beta 0.1.7). */
+  private compatibilityPage() {
+    return new RebuildPageContainer({
+      containerTotalNum: 5,
+      imageObject: [
+        new ImageContainerProperty({
+          containerID: 1,
+          containerName: "map",
+          xPosition: 0,
+          yPosition: 0,
+          width: 288,
+          height: 144,
+        }),
+        new ImageContainerProperty({
+          containerID: 5,
+          containerName: "maneuver",
+          xPosition: 300,
+          yPosition: 0,
+          width: 48,
+          height: 48,
+        }),
+      ],
+      textObject: [
+        new TextContainerProperty({
+          containerID: 2,
+          containerName: "instruction",
+          xPosition: 360,
+          yPosition: 0,
+          width: 216,
+          height: 144,
+          content: "准备导航",
+          isEventCapture: 1,
+        }),
+        new TextContainerProperty({
+          containerID: 3,
+          containerName: "status",
+          xPosition: 300,
+          yPosition: 150,
+          width: 276,
+          height: 54,
+          content: "定位时间未知",
+          isEventCapture: 0,
+        }),
+        new TextContainerProperty({
+          containerID: 4,
+          containerName: "attribution",
+          xPosition: 0,
+          yPosition: 208,
+          width: 576,
+          height: 80,
+          content: " ",
+          isEventCapture: 0,
+        }),
+      ],
+      menuObject: new MenuContainerProperty({
+        menuItems: [
+          new MenuItemProperty({ itemID: 1, itemName: "暂停" }),
+          new MenuItemProperty({ itemID: 2, itemName: "继续" }),
+          new MenuItemProperty({ itemID: 3, itemName: "结束" }),
+        ],
+      }),
+    });
   }
   private async createPage() {
     const page = new CreateStartUpPageContainer({
@@ -281,8 +440,25 @@ export class EvenDevice {
           `create-invalid(1)/rebuild-${exceptionCode(error)}`,
         );
       }
-      if (!rebuilt)
-        throw new DisplayError("PAGE", "create-invalid(1)/rebuild-invalid");
+      if (!rebuilt) {
+        let compatible;
+        try {
+          compatible = await this.bridge!.rebuildPageContainer(
+            this.compatibilityPage(),
+          );
+        } catch (error) {
+          throw new DisplayError(
+            "PAGE",
+            `create-invalid(1)/rebuild-invalid/compat-${exceptionCode(error)}`,
+          );
+        }
+        if (!compatible)
+          throw new DisplayError(
+            "PAGE",
+            "create-invalid(1)/rebuild-invalid/compat-invalid",
+          );
+        this.compatibilityLayout = true;
+      }
     } else if (result !== 0) {
       const code =
         ["success", "invalid", "oversize", "outOfMemory"][result] || "unknown";
@@ -336,6 +512,10 @@ export class EvenDevice {
       if (!wasConnected && this.connected) this.pageFailure = undefined;
       this.queue.invalidate();
       this.quadrantPixels = [];
+      this.legacyMapPixels = undefined;
+      this.legacyIconKey = undefined;
+      this.legacyTextValues.clear();
+      this.compatibilityAnnounced = false;
       this.onHealth(
         this.connected ? "G2 已连接" : "G2 已断开；手机继续显示导航",
       );
@@ -496,6 +676,11 @@ export class EvenDevice {
     this.pageCreated = false;
     this.pageFailure = undefined;
     this.quadrantPixels = [];
+    this.compatibilityLayout = false;
+    this.compatibilityAnnounced = false;
+    this.legacyMapPixels = undefined;
+    this.legacyIconKey = undefined;
+    this.legacyTextValues.clear();
     this.connected = false;
     this.source = "NONE";
   }

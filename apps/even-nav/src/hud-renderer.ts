@@ -197,3 +197,24 @@ export async function renderHud(frame: HudContent): Promise<Uint8Array[]> {
   }
   return images;
 }
+
+/** Preserve the entire B map in the proven 288 × 144 native image container. */
+export async function renderCompatibilityMap(
+  pixels: Uint8Array,
+): Promise<Uint8Array> {
+  const map = await bitmap(pixels);
+  try {
+    if (map.width !== HUD_MAP_WIDTH || map.height !== HUD_MAP_HEIGHT)
+      throw new Error("Compatibility map requires a 576 × 192 source");
+    const canvas = document.createElement("canvas");
+    canvas.width = 288;
+    canvas.height = 144;
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, 288, 144);
+    ctx.drawImage(map, 0, 24, 288, 96);
+    return await png(canvas);
+  } finally {
+    map.close();
+  }
+}
