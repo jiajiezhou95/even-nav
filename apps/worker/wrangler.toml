@@ -4,6 +4,7 @@ compatibility_date = "2026-10-20"
 workers_dev = true
 [vars]
 ALLOWED_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173,null"
+EVEN_APP_LOOPBACK = "true"
 TRANSITOUS_ENABLED = "true"
 TRANSITOUS_CONTACT = "https://github.com/jiajiezhou95/even-nav"
 [[durable_objects.bindings]]

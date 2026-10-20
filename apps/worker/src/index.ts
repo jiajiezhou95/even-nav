@@ -22,6 +22,7 @@ export interface Env {
   ACCESS_TOKEN?: string;
   GOOGLE_API_KEY?: string;
   ALLOWED_ORIGINS?: string;
+  EVEN_APP_LOOPBACK?: string;
   TRANSITOUS_ENABLED?: string;
   TRANSITOUS_CONTACT?: string;
   QUOTA?: QuotaNamespace;
@@ -74,7 +75,19 @@ export function createWorker(fetcher: Fetcher = fetch) {
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
-      const cors = origin && allowed.includes(origin) ? origin : undefined;
+      // The installed iPhone Even App serves its package on a changing loopback
+      // port (observed in a real preflight). This grants CORS, not authentication.
+      const loopbackPort = origin?.match(
+        /^http:\/\/127\.0\.0\.1:([1-9][0-9]{0,4})$/,
+      )?.[1];
+      const evenLoopback =
+        env.EVEN_APP_LOOPBACK === "true" &&
+        loopbackPort !== undefined &&
+        Number(loopbackPort) <= 65535;
+      const cors =
+        origin && (allowed.includes(origin) || evenLoopback)
+          ? origin
+          : undefined;
       let result: Response;
       try {
         if (origin && !cors) throw new NavError("AUTH_FAILED", "来源未获授权");

@@ -148,6 +148,77 @@ describe("quota durability and security", () => {
     r.headers.set("Origin", "https://evil.test");
     expect((await createWorker().fetch(r, env())).status).toBe(401);
   });
+  it("allows opt-in Even App dynamic loopback preflight and authenticated requests", async () => {
+    const e = { ...env(), EVEN_APP_LOOPBACK: "true" };
+    const worker = createWorker();
+    for (const origin of ["http://127.0.0.1:63639", "http://127.0.0.1:49152"]) {
+      const preflight = await worker.fetch(
+        new Request("https://worker.test/v1/auth/pair", {
+          method: "OPTIONS",
+          headers: { Origin: origin },
+        }),
+        e,
+      );
+      expect(preflight.status).toBe(204);
+      expect(preflight.headers.get("Access-Control-Allow-Origin")).toBe(origin);
+      expect(preflight.headers.get("Vary")).toBe("Origin");
+      expect(
+        preflight.headers.get("Access-Control-Allow-Credentials"),
+      ).toBeNull();
+      const request = req("/v1/providers");
+      request.headers.set("Origin", origin);
+      const result = await worker.fetch(request, e);
+      expect(result.status).toBe(200);
+      expect(result.headers.get("Access-Control-Allow-Origin")).toBe(origin);
+    }
+  });
+  it("keeps dynamic loopback opt-in and requires credentials before any provider work", async () => {
+    const f = vi.fn() as unknown as Fetcher;
+    const worker = createWorker(f);
+    const request = new Request("https://worker.test/v1/providers", {
+      headers: { Origin: "http://127.0.0.1:63639" },
+    });
+    const disabled = await worker.fetch(request, env());
+    expect(disabled.status).toBe(401);
+    expect(disabled.headers.get("Access-Control-Allow-Origin")).toBeNull();
+    const enabled = await worker.fetch(request, {
+      ...env(),
+      QUOTA: undefined,
+      EVEN_APP_LOOPBACK: "true",
+    });
+    expect(enabled.status).toBe(401);
+    expect(enabled.headers.get("Access-Control-Allow-Origin")).toBe(
+      "http://127.0.0.1:63639",
+    );
+    expect(f).not.toHaveBeenCalled();
+  });
+  it.each([
+    "http://127.0.0.1:0",
+    "http://127.0.0.1:65536",
+    "http://127.0.0.1:063639",
+    "http://127.0.0.1:63639/",
+    "http://127.0.0.1:63639/path",
+    "http://127.0.0.1:63639?query",
+    "http://127.0.0.1.evil.test:63639",
+    "http://127.0.0.1:63639@evil.test",
+    "http://evil.test:63639",
+    "https://127.0.0.1:63639",
+    "http://192.168.1.1:63639",
+    "http://localhost:63639",
+  ])(
+    "rejects origins outside the precise native loopback shape: %s",
+    async (origin) => {
+      const result = await createWorker().fetch(
+        new Request("https://worker.test/v1/auth/pair", {
+          method: "OPTIONS",
+          headers: { Origin: origin },
+        }),
+        { ...env(), EVEN_APP_LOOPBACK: "true" },
+      );
+      expect(result.status).toBe(401);
+      expect(result.headers.get("Access-Control-Allow-Origin")).toBeNull();
+    },
+  );
   it("never exposes tokens in capabilities", async () => {
     const r = await createWorker().fetch(req("/v1/providers"), {
       ...env(),

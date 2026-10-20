@@ -48,3 +48,11 @@ Google setup and persistent-device-auth checkpoint:
 - Native persistence must still be observed after an actual iPhone app relaunch. SDK local storage is not claimed to provide hardware-backed credential encryption.
 
 Beta 0.1.1 candidate: official package 69,866 bytes, SHA256 `41de70a0a6e09361be517a66e7336929f0d5f6eae502d01539138bdf50bec2bf`. Production storage waits for the native SDK bridge, including late injection; it never silently falls back to browser storage. Only the local Vite development preview uses browser persistence. Package upload/channel readback and exact-head CI are tracked by the official CLI and PR, separately from physical relaunch acceptance.
+
+Native connection repair (2026-10-21, REPAIR_RESUME):
+- User installed Beta 0.1.1; screenshots show G2 connected but Worker connection failed. G2 connection alone is not display or navigation acceptance.
+- A live phone preflight reached the Worker from `http://127.0.0.1:63639` and returned 401. The fixed development-port allowlist excluded the native app's dynamic port.
+- Added explicit `EVEN_APP_LOOPBACK` opt-in for the exact HTTP IPv4 loopback host with a valid port. No wildcard CORS, cookie credentials, bearer-auth bypass, or provider changes.
+- Targeted Worker suite: 38 tests PASS, including port changes, opt-out, missing authentication and malformed/foreign origins.
+- Deployed Worker version `e4f3b1ad-76b2-44b8-ac7e-8fb7abf1c85f`. Live repair probe: matching preflight204; no credential401; foreign origin401; pair200; device capabilities200; revoke200; revoked device401. Zero Google/Transitous calls. This is a computer-originated probe using the observed native Origin, not proof of phone success.
+- Existing Beta 0.1.1 package remains compatible and unchanged. Phone retry, native relaunch persistence, G2 same-frame display and lockscreen navigation remain pending.
