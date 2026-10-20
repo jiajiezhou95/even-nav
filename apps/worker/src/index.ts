@@ -16,6 +16,7 @@ import {
   type Fetcher,
 } from "../../../packages/providers/src/index";
 import { resolveImport } from "./resolver";
+import { imuUploadCall, imuUploadSchema } from "./imu-upload";
 import { reserve, type QuotaNamespace } from "./quota";
 export { QuotaLedger } from "./quota";
 export interface Env {
@@ -34,10 +35,10 @@ function configured(key: string | undefined) {
   if (!key) throw new NavError("CONFIG_MISSING", "Google BYOK 尚未配置");
   return key;
 }
-async function payload(r: Request) {
+async function payload(r: Request, maxBytes = 16384) {
   if (!r.headers.get("Content-Type")?.startsWith("application/json"))
     throw new NavError("INVALID_INPUT", "需要 JSON 请求");
-  if (Number(r.headers.get("Content-Length")) > 16384)
+  if (Number(r.headers.get("Content-Length")) > maxBytes)
     throw new NavError("INVALID_INPUT", "请求过大");
   const reader = r.body?.getReader();
   if (!reader) throw new NavError("INVALID_INPUT", "缺少请求数据");
@@ -49,7 +50,7 @@ async function payload(r: Request) {
       const next = await reader.read();
       if (next.done) break;
       size += next.value.length;
-      if (size > 16384) throw new NavError("INVALID_INPUT", "请求过大");
+      if (size > maxBytes) throw new NavError("INVALID_INPUT", "请求过大");
       text += decoder.decode(next.value, { stream: true });
     }
     text += decoder.decode();
@@ -113,7 +114,20 @@ export function createWorker(fetcher: Fetcher = fetch) {
             env.ACCESS_TOKEN,
             env.QUOTA,
           );
-          if (u.pathname === "/v1/auth/pair" && request.method === "POST") {
+          if (
+            u.pathname === "/v1/diagnostics/imu" &&
+            ["GET", "POST"].includes(request.method)
+          ) {
+            const data =
+              request.method === "POST"
+                ? parse(imuUploadSchema, await payload(request, 1024 * 1024))
+                : undefined;
+            const stored = await imuUploadCall(identity, env.QUOTA, data);
+            result = json(await stored.json(), stored.status);
+          } else if (
+            u.pathname === "/v1/auth/pair" &&
+            request.method === "POST"
+          ) {
             parse(z.object({}).strict(), await payload(request));
             result = json(await pairDevice(identity, env.QUOTA));
           } else if (

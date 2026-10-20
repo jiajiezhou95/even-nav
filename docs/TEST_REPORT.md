@@ -128,3 +128,14 @@ User also authorized a bounded G2 XYZ capture. Manual diagnostics use the public
 - STATIC/BUILD PASS: TypeScript, diff check, production build and privacy scan (113 files). Status-only G2 refresh deduplicates identical map/icon data; actual BLE blink cadence is hardware-dependent.
 - DEPLOYED: private Beta 0.1.6 build 116702, 77,787 bytes; cloud download SHA256 matches `f63a88551ed8556ba29509b4dda42e2927df18e840554fe7a55a7c9d276ff5c5`. Public channel unset. No Worker deploy or Google/Transitous calls.
 - Hardware next: end navigation; settings > sensor capture, phone fixed, select each action phase and hold/perform about 5 seconds; stop and export/copy local XYZ JSON. Optional phone-only rotation is a source-isolation control. No claim of calibrated heading or lockscreen acceptance.
+
+### Beta 0.1.7 — manual sensor upload repair
+
+- Replaces the Even WebView blob download with an authenticated, explicit upload to the personal Worker; stays in the app and shows a receipt. Retry preserves the in-memory sample. New samples cannot inherit stale success messages.
+- Strict XYZ/phase/relative-time payload only, bounded to 6000 samples / 1 MiB. Latest report stored atomically in bounded Durable Object chunks; owner-only retrieval. No Google/Transitous calls.
+- Targeted Worker tests: 43 PASS. TypeScript PASS. Browser mock upload checks cover success without navigation, failure/manual retry, duplicate requests and stale receipts. These do not establish iPhone acceptance.
+- LIVE Worker synthetic upload/readback, CORS and unauthorized denial PASS; local owner retrieval saved to ignored `.local/imu/`. The two-point synthetic report is not a glasses sample.
+- Worker deployment: `942af390-8a2c-4962-a4db-d16567bf85a0`.
+- Private Beta build 116707, 78459 bytes; downloaded package SHA256 matches `c956d7f97d479fe878e8e1294efc2851320ddf8de8468d6048ec5aad63274492`. Build and privacy scan PASS. Exact-head CI is recorded on the existing Draft PR.
+- User-only pending: update to 0.1.7, capture/stop then upload from Even App; retrieve actual report and analyze XYZ semantics. No claim of head yaw or lockscreen acceptance.
+- New HUD arrangement request is design-only until the user selects a proposal; this package keeps the existing navigation layout.

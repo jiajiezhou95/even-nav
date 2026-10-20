@@ -1,4 +1,5 @@
 import { deviceStorage } from "./auth";
+import { imuStorage } from "./imu-upload";
 import { NavError } from "../../../packages/contracts/src/index";
 export const CAPS = {
   ROUTES_ESSENTIALS: 1000,
@@ -56,6 +57,8 @@ export class QuotaLedger {
     try {
       if (new URL(request.url).pathname.startsWith("/auth/"))
         return await deviceStorage(request, this.state.storage);
+      if (new URL(request.url).pathname.startsWith("/imu/"))
+        return await imuStorage(request, this.state.storage);
       const caps = this.caps();
       const now = new Date(),
         month = now.toISOString().slice(0, 7);

@@ -1262,10 +1262,7 @@ test("failed return location pauses visibly and explicit resume restores ticks",
   await expect(page.locator("#nav-fix")).toBeHidden();
 });
 
-test("local IMU settings capture selected phase and export without location or provider calls", async ({
-  page,
-}) => {
-  await page.goto("/");
+async function mockImu(page: Page) {
   await page.evaluate(async () => {
     const path = "/src/device.ts";
     const { EvenDevice } = await import(path);
@@ -1287,6 +1284,28 @@ test("local IMU settings capture selected phase and export without location or p
       },
     });
   });
+}
+
+async function captureImu(page: Page) {
+  await page.getByRole("button", { name: "开始采样", exact: true }).click();
+  await expect(page.locator("#imu-stats")).toContainText("正在采样");
+  await page.getByRole("button", { name: "向左转头", exact: true }).click();
+  await page.evaluate(() => (window as any).emitImu(1));
+  await page.getByRole("button", { name: "停止采样", exact: true }).click();
+  await expect(page.locator("#imu-report")).toBeVisible();
+}
+
+async function pairForImu(page: Page) {
+  await page.getByLabel("Worker 首次配对凭据").fill("test-owner-token");
+  await page.getByRole("button", { name: "首次配对并连接" }).click();
+  await expect(page.getByText("后端已连接", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+}
+
+test("local IMU settings capture selected phase and export without location or provider calls", async ({
+  page,
+}) => {
+  await mockImu(page);
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByRole("button", { name: "开始采样", exact: true }).click();
   await expect(page.locator("#imu-stats")).toContainText("正在采样");
@@ -1309,4 +1328,137 @@ test("local IMU settings capture selected phase and export without location or p
   await expect
     .poll(() => page.evaluate(() => (window as any).imuCalls))
     .toEqual([true, false, true, false]);
+});
+
+test("IMU manual upload sends only sample fields and keeps the current page", async ({
+  page,
+}) => {
+  const uploads: unknown[] = [];
+  const navigations: string[] = [];
+  page.on("framenavigated", (frame) => navigations.push(frame.url()));
+  page.on("download", () => {
+    throw new Error("IMU upload must not download a file");
+  });
+  await page.route("https://worker.test/v1/diagnostics/imu", async (route) => {
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().headers().authorization).toBe(
+      "Bearer synthetic-device-token-for-ui-tests",
+    );
+    uploads.push(route.request().postDataJSON());
+    await route.fulfill({
+      json: {
+        id: "12345678-abcd-1234-abcd-123456789012",
+        receivedAt: new Date().toISOString(),
+        sampleCount: 1,
+      },
+    });
+  });
+  await mockImu(page);
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await captureImu(page);
+  const upload = page.getByRole("button", { name: "上传采样", exact: true });
+  await expect(upload).toBeDisabled();
+  expect(uploads).toEqual([]);
+  await pairForImu(page);
+  await expect(upload).toBeEnabled();
+  const localReport = await page.locator("#imu-report").inputValue();
+  await upload.click();
+  await expect(page.locator("#imu-upload-status")).toHaveText(
+    "已上传 1 条采样 · 回执 12345678",
+  );
+  expect(uploads).toEqual([
+    {
+      schemaVersion: 1,
+      samples: [
+        { receivedAt: expect.any(Number), phase: "left", x: 1, y: 2, z: 3 },
+      ],
+    },
+  ]);
+  await expect(page.locator("#imu-report")).toHaveValue(localReport);
+  expect(navigations).toEqual([]);
+  expect(page.url()).toBe("http://127.0.0.1:5173/");
+  await page.getByRole("button", { name: "开始采样", exact: true }).click();
+  await expect(page.locator("#imu-upload")).toBeDisabled();
+  await expect(page.locator("#imu-upload-status")).not.toContainText("已上传");
+  await page.getByRole("button", { name: "停止采样", exact: true }).click();
+  await expect(page.locator("#imu-export")).toBeHidden();
+  expect(uploads).toHaveLength(1);
+});
+
+test("IMU failed upload retains samples for manual retry and blocks duplicate requests", async ({
+  page,
+}) => {
+  let attempts = 0;
+  let releaseFailure!: () => void;
+  const pendingFailure = new Promise<void>((resolve) => {
+    releaseFailure = resolve;
+  });
+  await page.route("https://worker.test/v1/diagnostics/imu", async (route) => {
+    attempts++;
+    if (attempts === 1) {
+      await pendingFailure;
+      await route.fulfill({
+        status: 503,
+        json: { error: { code: "PROVIDER_UNAVAILABLE", message: "private" } },
+      });
+    } else {
+      await route.fulfill({
+        json: { id: "87654321-retry", receivedAt: "now", sampleCount: 1 },
+      });
+    }
+  });
+  await mockImu(page);
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await pairForImu(page);
+  await captureImu(page);
+  const localReport = await page.locator("#imu-report").inputValue();
+  const upload = page.getByRole("button", { name: "上传采样", exact: true });
+  await upload.click();
+  await expect(page.locator("#imu-upload-status")).toHaveText(
+    "正在上传 1 条采样…",
+  );
+  await expect(upload).toBeDisabled();
+  await upload.dispatchEvent("click");
+  expect(attempts).toBe(1);
+  releaseFailure();
+  await expect(page.locator("#imu-upload-status")).toContainText(
+    "上传未确认，本机采样已保留",
+  );
+  await expect(page.locator("#imu-upload-status")).not.toContainText("private");
+  await expect(page.locator("#imu-report")).toHaveValue(localReport);
+  expect(attempts).toBe(1);
+  await upload.click();
+  await expect(page.locator("#imu-upload-status")).toHaveText(
+    "已上传 1 条采样 · 回执 87654321",
+  );
+  expect(attempts).toBe(2);
+});
+
+test("IMU late upload receipt cannot mark a newer sample as uploaded", async ({
+  page,
+}) => {
+  let releaseUpload!: () => void;
+  const pendingUpload = new Promise<void>((resolve) => {
+    releaseUpload = resolve;
+  });
+  await page.route("https://worker.test/v1/diagnostics/imu", async (route) => {
+    await pendingUpload;
+    await route.fulfill({
+      json: { id: "12345678-previous", receivedAt: "now", sampleCount: 1 },
+    });
+  });
+  await mockImu(page);
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await pairForImu(page);
+  await captureImu(page);
+  const upload = page.getByRole("button", { name: "上传采样", exact: true });
+  await upload.click();
+  await expect(upload).toBeDisabled();
+  await captureImu(page);
+  releaseUpload();
+  await expect(upload).toBeEnabled();
+  await expect(page.locator("#imu-upload-status")).not.toContainText("已上传");
+  await expect(page.locator("#imu-upload-status")).not.toContainText(
+    "12345678",
+  );
 });

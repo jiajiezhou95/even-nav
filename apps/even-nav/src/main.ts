@@ -60,6 +60,9 @@ const credentials = new DeviceCredentials(client, createCredentialStore());
 let imuProbe: ReturnType<typeof createImuProbe> | undefined;
 let imuStarting = false;
 let imuEpoch = 0;
+let imuUploadBusy = false;
+let imuSampleRevision = 0;
+let imuUploadMessage = "";
 let authBusy = true;
 let credentialStatus = "正在检查此设备的配对状态…";
 let destination: EndpointCandidate | undefined,
@@ -134,7 +137,7 @@ $("#app").innerHTML = `
     <p id="credential-status" class="small muted" aria-live="polite"></p>
     <button id="connect-backend" class="primary wide">首次配对并连接</button><button id="retry-backend" class="secondary wide">重试已保存的连接</button><button id="forget-backend" class="secondary wide danger">断开并忘记此设备</button><button id="connect-device" class="secondary wide">连接 Even App / G2</button>
     <button id="browser-location" class="text-button wide">启用浏览器开发定位</button><p class="small muted">开发定位不等于 Even GPS、G2 显示或锁屏持续导航。</p>
-    <section class="imu-controls" aria-label="眼镜传感器采样"><h3>眼镜传感器采样</h3><p class="small muted">手机放稳；仅采样，不用于导航朝向。最多 60 秒，结果仅留在本页。</p>
+    <section class="imu-controls" aria-label="眼镜传感器采样"><h3>眼镜传感器采样</h3><p class="small muted">手机放稳；仅采样，不用于导航朝向。最多 60 秒。停止后可手动上传到你的个人 Worker，仅保留最近一次上传；上传内容只有 XYZ、动作阶段和相对时间。</p>
     <button id="imu-start" class="secondary">开始采样</button><button id="imu-stop" class="secondary" disabled>停止采样</button>
     <div class="imu-phases">${Object.entries({
       still: "静止",
@@ -150,7 +153,7 @@ $("#app").innerHTML = `
       )
       .join("")}</div>
     <p id="imu-stats" class="small" aria-live="polite">尚未采样</p>
-    <div id="imu-export" hidden><button id="imu-download" class="text-button">下载采样 JSON</button><label for="imu-report">本机采样结果（也可长按全选复制）</label><textarea id="imu-report" readonly rows="5"></textarea></div></section>
+    <div id="imu-export" hidden><button id="imu-upload" class="secondary" disabled>上传采样</button><p id="imu-upload-status" class="small" aria-live="polite"></p><label for="imu-report">本机采样结果（也可长按全选复制）</label><textarea id="imu-report" readonly rows="5"></textarea></div></section>
   </dialog>
   <dialog id="manual"><form method="dialog"><div class="dialog-heading"><h2>手动输入目的地</h2><button aria-label="关闭手动输入" class="icon-button">×</button></div></form>
     <label for="manual-input">完整地址或 纬度, 经度</label><input id="manual-input" placeholder="例如：35.6812, 139.7671"><p class="small muted">坐标按 WGS84 纬度在前。地址补全仅在提交时请求。</p><button id="manual-submit" class="primary wide">确认输入</button>
@@ -989,6 +992,18 @@ function renderImu() {
     busy ||
     ["NAVIGATING", "ARRIVED"].includes(session.snapshot.phase);
   $<HTMLButtonElement>("#imu-stop").disabled = !active;
+  $<HTMLButtonElement>("#imu-upload").disabled =
+    active ||
+    state?.status !== "stopped" ||
+    !state.samples.length ||
+    imuUploadBusy ||
+    authBusy ||
+    !client.configured;
+  $("#imu-upload-status").textContent =
+    imuUploadMessage ||
+    (client.configured
+      ? "点击上传后，可凭回执查找采样。"
+      : "请先配对并连接个人 Worker；也可复制下方本机结果。");
   if (!state) return;
   const last = state.samples.at(-1);
   $("#imu-stats").textContent = state.error
@@ -1018,6 +1033,8 @@ $("#imu-start").onclick = async () => {
   )
     return;
   imuStarting = true;
+  imuSampleRevision++;
+  imuUploadMessage = "";
   renderImu();
   const epoch = lifecycleEpoch,
     probeEpoch = ++imuEpoch;
@@ -1047,17 +1064,52 @@ document
       (button.onclick = () =>
         imuProbe?.setPhase(button.dataset.imuPhase as ImuProbePhase)),
   );
-$("#imu-download").onclick = () => {
-  if (imuBlocksNavigation()) return;
-  const json = $<HTMLTextAreaElement>("#imu-report").value;
-  const url = URL.createObjectURL(
-    new Blob([json], { type: "application/json" }),
-  );
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = "even-nav-imu-sample.json";
-  anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+$("#imu-upload").onclick = async () => {
+  const state = imuProbe?.snapshot();
+  if (
+    imuBlocksNavigation() ||
+    state?.status !== "stopped" ||
+    !state.samples.length ||
+    imuUploadBusy ||
+    authBusy ||
+    !client.configured
+  )
+    return;
+  const revision = imuSampleRevision;
+  imuUploadBusy = true;
+  imuUploadMessage = `正在上传 ${state.samples.length} 条采样…`;
+  renderImu();
+  try {
+    const receipt = await client.request<{
+      id: string;
+      receivedAt: string;
+      sampleCount: number;
+    }>("/v1/diagnostics/imu", {
+      schemaVersion: 1,
+      samples: state.samples.map(({ receivedAt, phase, x, y, z }) => ({
+        receivedAt,
+        phase,
+        x,
+        y,
+        z,
+      })),
+    });
+    if (
+      typeof receipt.id !== "string" ||
+      !/^[a-zA-Z0-9-]{8,128}$/.test(receipt.id) ||
+      receipt.sampleCount !== state.samples.length
+    )
+      throw new Error("Invalid upload receipt");
+    if (revision === imuSampleRevision)
+      imuUploadMessage = `已上传 ${receipt.sampleCount} 条采样 · 回执 ${receipt.id.slice(0, 8)}`;
+  } catch {
+    if (revision === imuSampleRevision)
+      imuUploadMessage =
+        "上传未确认，本机采样已保留。请检查个人 Worker 连接后点击「上传采样」重试。";
+  } finally {
+    imuUploadBusy = false;
+    renderImu();
+  }
 };
 $("#settings").addEventListener("close", () => {
   imuEpoch++;
