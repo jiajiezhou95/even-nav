@@ -183,6 +183,7 @@ export class NavigationMap {
     route?: Route,
     position?: Coordinate,
     alternatives: Route[] = [],
+    movement?: { bearing: number; timestamp: number; maxAgeMs: number },
   ): Promise<void> {
     this.controller?.abort();
     const controller = (this.controller = new AbortController());
@@ -402,8 +403,41 @@ export class NavigationMap {
       ctx.strokeStyle = fill === "#fff" ? "#000" : "#fff";
       ctx.stroke();
     };
+    const drawDirection = (
+      target: CanvasRenderingContext2D,
+      color: string,
+      halo: string,
+    ) => {
+      if (
+        !position ||
+        !movement ||
+        !Number.isFinite(movement.bearing) ||
+        movement.bearing < 0 ||
+        movement.bearing >= 360 ||
+        Date.now() < movement.timestamp ||
+        Date.now() - movement.timestamp > movement.maxAgeMs
+      )
+        return;
+      const p = project(position, zoom);
+      target.save();
+      target.translate(p.x - west, p.y - north);
+      target.rotate((movement.bearing * Math.PI) / 180);
+      target.beginPath();
+      target.moveTo(0, -19);
+      target.lineTo(-6, -8);
+      target.lineTo(0, -10);
+      target.lineTo(6, -8);
+      target.closePath();
+      target.fillStyle = color;
+      target.fill();
+      target.strokeStyle = halo;
+      target.lineWidth = 1.5;
+      target.stroke();
+      target.restore();
+    };
     if (destination?.coordinate) marker(destination.coordinate, 5, "#fff");
     if (position) marker(position, 6, "#000");
+    drawDirection(ctx, "#163e30", "#fff");
     this.hudOverlay = (hud) => {
       hud.lineJoin = "round";
       hud.lineCap = "round";
@@ -436,6 +470,7 @@ export class NavigationMap {
         hud.lineWidth = 2;
         hud.stroke();
       }
+      drawDirection(hud, "#fff", "#000");
     };
     this.context.drawImage(offscreen, 0, 0);
     const routeAttribution = [

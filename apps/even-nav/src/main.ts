@@ -17,7 +17,14 @@ import { EvenDevice, type DeviceFix } from "./device";
 import { NavigationMap } from "./map";
 import { staleInstruction, staleThreshold } from "./freshness";
 import { createCredentialStore, DeviceCredentials } from "./credentials";
-import { conciseInstruction, currentStepDetail } from "./guidance";
+import {
+  conciseInstruction,
+  currentStepDetail,
+  guidanceView,
+  type ManeuverIcon,
+} from "./guidance";
+import { maneuverSvg, maneuverPng } from "./maneuver-icons";
+import { movementBearingFromHistory } from "./direction";
 import packageInfo from "../../../package.json";
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string) =>
@@ -71,6 +78,7 @@ let mapBusy = false,
   mapPending = false,
   previousMapVersion = -1;
 let navigationViewKey = "";
+let directionHistory: DeviceFix[] = [];
 let pageSuspended = false,
   lifecycleEpoch = 0;
 let lifecycleStop: Promise<void> = Promise.resolve();
@@ -166,18 +174,39 @@ function itinerary(route: Route) {
       (
         leg,
       ) => `<li><span class="leg-mode">${escape({ WALK: "步行", DRIVE: "驾驶", WAIT: "候车", RIDE: "乘车", TRANSFER: "换乘" }[leg.mode])}</span>
-    <div><strong>${escape(leg.line || leg.steps[0]?.instruction || leg.to || "下一段")}</strong>${leg.headsign ? `<span>往 ${escape(leg.headsign)}</span>` : ""}<span>${escape([leg.from, leg.to].filter(Boolean).join(" → "))}</span>
+    <div><strong>${escape(leg.line || leg.to || (leg.mode === "WALK" ? "步行" : leg.mode === "DRIVE" ? "驾驶" : "下一段"))}</strong>${leg.headsign ? `<span>往 ${escape(leg.headsign)}</span>` : ""}<span>${escape([leg.from, leg.to].filter(Boolean).join(" → "))}</span>
+    ${leg.steps.length ? `<ol class="itinerary-steps">${leg.steps.map((step) => `<li><span>${escape(step.instruction)}</span><small>${distance(step.distanceMeters)}</small></li>`).join("")}</ol>` : ""}
     <span>${duration(leg.durationSeconds)}${leg.startTime ? ` · ${time(leg.startTime)}` : ""}${leg.platform ? ` · ${escape(leg.platform)} 站台` : ""}${leg.mode === "RIDE" ? ` · ${leg.realtime ? "含实时数据" : "计划时刻 · 延误未知"}` : ""}${leg.staySeated ? " · 直通无需下车" : ""}</span></div></li>`,
     )
     .join("");
 }
+function guidanceMarkup(state = session.snapshot) {
+  const view = guidanceView(state, mode);
+  return `<div class="guidance-current"><span id="nav-current-icon" class="maneuver-icon" data-icon="${view.icon}" aria-hidden="true">${maneuverSvg(view.icon)}</span><span><span id="nav-current-text">${escape(view.action)}</span><span id="nav-step-distance" class="${view.stale ? "distance-unavailable" : ""}">${escape(view.distance || "")}</span></span></div><div id="nav-next" class="guidance-next" ${view.next ? "" : "hidden"}><span class="next-label">下一步</span><span id="nav-next-icon" class="maneuver-icon" data-icon="${view.nextIcon || "none"}" aria-hidden="true">${maneuverSvg(view.nextIcon || "none")}</span><span id="nav-next-text">${escape(view.next || "")}</span></div>`;
+}
+function updateIcon(selector: string, icon: ManeuverIcon) {
+  const element = $(selector);
+  if (element.dataset.icon !== icon) {
+    element.innerHTML = maneuverSvg(icon);
+    element.dataset.icon = icon;
+  }
+}
 function updateNavigationTelemetry(state = session.snapshot) {
-  $("#nav-instruction").textContent = instruction(state);
+  const view = guidanceView(state, mode);
+  $("#nav-current-text").textContent = view.action;
+  $("#nav-step-distance").textContent = view.distance || "";
+  $("#nav-step-distance").className = view.stale ? "distance-unavailable" : "";
+  $("#nav-next").hidden = !view.next;
+  $("#nav-next-text").textContent = view.next || "";
+  updateIcon("#nav-current-icon", view.icon);
+  updateIcon("#nav-next-icon", view.nextIcon || "none");
   $("#current-step-detail").textContent = currentStepDetail(state);
-  $("#nav-distance").textContent = distance(state.remainingMeters);
+  $("#nav-distance").textContent = view.stale
+    ? "—"
+    : distance(state.remainingMeters);
   $("#nav-fix").textContent =
-    `最后可靠定位：${state.location ? time(state.location.timestamp) + " JST" : "未知"}${state.locationStale ? " · 定位过期，请检查现场" : ""}`;
-  $("#nav-fix").className = state.locationStale ? "warning" : "muted";
+    `${state.paused ? "已暂停" : view.stale ? "定位过期" : "GPS"} · ${state.location ? time(state.location.timestamp) : "未知"}`;
+  $("#nav-fix").className = `gps-status ${view.stale ? "warning" : "muted"}`;
   $("#nav-replan").hidden = !state.replanNeeded;
 }
 function render() {
@@ -261,18 +290,19 @@ function render() {
       const walking = route.legs
         .filter((leg) => leg.mode === "WALK" || leg.mode === "TRANSFER")
         .reduce((sum, leg) => sum + leg.distanceMeters, 0);
+      const warnings = route.warnings.filter(
+        (warning) => !/beta|测试版|试用版/i.test(warning),
+      );
       html += `<article id="route-summary" class="route-card" role="tabpanel" aria-labelledby="route-tab-${routeIndex}"><p class="route-summary-line">${distance(route.distanceMeters)} · 到达 ${time(route.legs.at(-1)?.endTime || Date.now() + route.durationSeconds * 1000)}${mode === "TRANSIT" ? ` · 步行 ${distance(walking)} · ${ride.slice(1).filter((leg) => !leg.staySeated).length} 次换乘` : ""}</p>
-        <details><summary>查看行程</summary><ol class="legs">${itinerary(route)}</ol>${route.warnings
-          .filter((warning) => !/beta|测试版|试用版/i.test(warning))
-          .map((warning) => `<p class="small muted">${escape(warning)}</p>`)
-          .join("")}</details></article>`;
+        <ol class="legs selected-itinerary">${itinerary(route)}</ol>${warnings.length ? `<details class="route-notes"><summary>路线备注</summary>${warnings.map((warning) => `<p class="small muted">${escape(warning)}</p>`).join("")}</details>` : ""}</article>`;
     }
     html += `<button id="start" class="primary wide" ${!selected || busy ? "disabled" : ""}>开始导航 ↗</button></section>`;
   }
   if (["NAVIGATING", "ARRIVED"].includes(state.phase)) {
     const leg = state.route?.legs[state.legIndex];
-    html += `<section class="panel navigation"><div class="section-label"><span>${state.phase === "ARRIVED" ? "到达附近" : state.paused ? "已暂停" : "03 / 导航中"}</span><span>${device.source === "BROWSER_DEV" ? "浏览器开发预览" : "Even 手机定位"}</span></div><h2 id="nav-instruction">${escape(instruction())}</h2><div class="big-distance"><strong id="nav-distance">${distance(state.remainingMeters)}</strong><span>剩余距离</span></div>
-      <p id="nav-fix" class="${state.locationStale ? "warning" : "muted"}">最后可靠定位：${state.location ? time(state.location.timestamp) + " JST" : "未知"}${state.locationStale ? " · 定位过期，请检查现场" : ""}</p>
+    const view = guidanceView(state, mode);
+    html += `<section class="panel navigation"><div class="section-label"><span>${state.phase === "ARRIVED" ? "到达附近" : state.paused ? "已暂停" : "03 / 导航中"}</span><span>${device.source === "BROWSER_DEV" ? "浏览器开发预览" : "Even 手机定位"}</span></div><div id="nav-instruction" role="heading" aria-level="2">${guidanceMarkup(state)}</div><div class="big-distance"><strong id="nav-distance">${view.stale ? "—" : distance(state.remainingMeters)}</strong><span>总剩余距离</span></div>
+      <p id="nav-fix" class="gps-status ${view.stale ? "warning" : "muted"}">${state.paused ? "已暂停" : view.stale ? "定位过期" : "GPS"} · ${state.location ? time(state.location.timestamp) : "未知"}</p>
       <p id="nav-replan" class="warning" ${state.replanNeeded ? "" : "hidden"}>检测到偏航、路线过期或错过发车，请重新规划。</p>
       <div class="nav-actions"><button id="pause" class="secondary">${state.paused ? "继续" : "暂停"}</button><button id="replan" class="secondary">重新规划</button><button id="end" class="secondary danger">结束</button></div>
       ${mode === "TRANSIT" && !state.paused ? `<div class="transit-actions">${leg?.mode === "WAIT" || (leg?.mode === "RIDE" && !state.boarded) ? '<button data-transit="BOARDED" class="secondary">已上车</button>' : ""}${leg?.mode === "RIDE" && state.boarded ? '<button data-transit="ALIGHTED" class="secondary">已下车</button>' : ""}${leg?.mode === "TRANSFER" ? '<button data-transit="TRANSFER_COMPLETED" class="secondary">已完成换乘</button>' : ""}</div>` : ""}
@@ -389,6 +419,7 @@ async function importInput(text: string, selectedFromGoogleMap = false) {
   error = "";
   notice = "";
   destination = undefined;
+  directionHistory = [];
   candidateChosen = false;
   selected = "";
   lastMapFrame = undefined;
@@ -576,7 +607,13 @@ function startNavigationTick() {
 }
 function onFix(value: DeviceFix) {
   fix = value;
-  session.updateLocation(value);
+  const previous = session.snapshot.location;
+  if (session.updateLocation(value) && previous) {
+    if (!directionHistory.length) directionHistory.push(previous);
+    directionHistory = [...directionHistory, value]
+      .filter((item) => value.timestamp - item.timestamp <= 30000)
+      .slice(-61);
+  }
   if (session.snapshot.phase === "ARRIVED") void device.stopLocation();
   if (
     session.snapshot.phase === "NAVIGATING" ||
@@ -670,12 +707,20 @@ async function drawMap() {
   mapError = "";
   renderRoutePreview();
   try {
+    const bearing = currentMovementBearing();
     await map.draw(
       center,
       destination,
       route,
       state.location?.coordinate || fix?.coordinate,
       state.phase === "ROUTE_SELECTION" ? state.routes.slice(0, 3) : [],
+      bearing === undefined || !state.location
+        ? undefined
+        : {
+            bearing,
+            timestamp: state.location.timestamp,
+            maxAgeMs: staleThreshold(mode),
+          },
     );
     if (version !== session.snapshot.version) return;
     mapError = "";
@@ -687,6 +732,8 @@ async function drawMap() {
     ) {
       lastFrame = Date.now();
       const pixels = await map.pixels();
+      const icon = guidanceView(state, mode).icon;
+      const iconPixels = await maneuverPng(icon);
       if (version !== session.snapshot.version) return;
       lastMapFrame = {
         version,
@@ -698,8 +745,9 @@ async function drawMap() {
         sequence: ++sequence,
         version,
         pixels,
+        icon: { key: icon, pixels: iconPixels },
         instruction: instruction(state),
-        status: `${state.paused ? "暂停 · " : ""}${staleInstruction(state.location?.timestamp, mode) ? "定位过期 · " : ""}GPS ${state.location ? time(state.location.timestamp) : "未知"} JST · ${distance(state.remainingMeters)}`,
+        status: `${state.paused ? "已暂停" : staleInstruction(state.location?.timestamp, mode) ? "定位过期 · 距离不可用" : `总剩余 ${distance(state.remainingMeters)}`}\nGPS ${state.location ? time(state.location.timestamp) : "未知"}`,
         attribution: map.attribution,
       });
     }
@@ -719,6 +767,7 @@ async function drawMap() {
           sequence: ++sequence,
           version,
           pixels: lastMapFrame.pixels,
+          icon: { key: "none", pixels: await maneuverPng("none") },
           instruction: "地图更新失败，请以现场道路为准；暂停转向指示",
           status: `保留旧图 · GPS ${lastMapFrame.fixTimestamp ? time(lastMapFrame.fixTimestamp) : "未知"} JST`,
           attribution: lastMapFrame.attribution,
@@ -734,6 +783,11 @@ async function drawMap() {
     }
   }
 }
+function currentMovementBearing() {
+  const state = session.snapshot;
+  if (state.phase !== "NAVIGATING" || state.paused) return;
+  return movementBearingFromHistory(directionHistory, mode);
+}
 function updateMapCaption() {
   renderRoutePreview();
   $("#map-state").textContent = map.ready ? "北向上" : "地图暂不可用";
@@ -743,7 +797,7 @@ function updateMapCaption() {
       ? "点击地图选择目的地。选择后仍需确认路线。"
       : session.snapshot.phase === "ROUTE_SELECTION"
         ? "点击路线或下方卡片选择。"
-        : "实心圆：最后定位 · 空心圆：目的地。");
+        : `实心圆：最后定位 · 空心圆：目的地${currentMovementBearing() !== undefined ? " · 箭头：行进方向" : ""}。`);
   $("#attribution").textContent = map.attribution;
   $("#google-attribution").hidden = !map.ready;
   map.canvas.hidden = !map.ready;

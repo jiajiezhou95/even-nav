@@ -27,6 +27,7 @@ export interface HudFrame {
   instruction: string;
   status: string;
   attribution: string;
+  icon?: { key: string; pixels: Uint8Array };
 }
 
 /** One in-flight operation, one replaceable pending operation. No automatic retry. */
@@ -98,6 +99,7 @@ export class EvenDevice {
   private locationStarting?: Promise<void>;
   private locationStopping?: Promise<void>;
   private pageCreated = false;
+  private iconKey?: string;
   private version = 0;
   connected = false;
   source: "EVEN" | "BROWSER_DEV" | "NONE" = "NONE";
@@ -115,7 +117,7 @@ export class EvenDevice {
         if (!this.pageCreated) {
           const result = await this.bridge.createStartUpPageContainer(
             new CreateStartUpPageContainer({
-              containerTotalNum: 4,
+              containerTotalNum: 5,
               imageObject: [
                 new ImageContainerProperty({
                   containerID: 1,
@@ -125,14 +127,22 @@ export class EvenDevice {
                   width: 288,
                   height: 144,
                 }),
+                new ImageContainerProperty({
+                  containerID: 5,
+                  containerName: "maneuver",
+                  xPosition: 300,
+                  yPosition: 0,
+                  width: 48,
+                  height: 48,
+                }),
               ],
               textObject: [
                 new TextContainerProperty({
                   containerID: 2,
                   containerName: "instruction",
-                  xPosition: 300,
+                  xPosition: 360,
                   yPosition: 0,
-                  width: 276,
+                  width: 216,
                   height: 144,
                   content: "准备导航",
                   isEventCapture: 1,
@@ -140,9 +150,9 @@ export class EvenDevice {
                 new TextContainerProperty({
                   containerID: 3,
                   containerName: "status",
-                  xPosition: 0,
+                  xPosition: 300,
                   yPosition: 150,
-                  width: 576,
+                  width: 276,
                   height: 54,
                   content: "定位时间未知",
                   isEventCapture: 0,
@@ -171,7 +181,7 @@ export class EvenDevice {
           this.pageCreated = true;
         }
         if (frame.version !== this.version || !this.connected) return;
-        // Text is submitted before the single serialized image; native submission is not optical proof.
+        // Text and both images share one serialized queue; submission is not optical proof.
         for (const [id, name, content] of [
           [2, "instruction", frame.instruction],
           [3, "status", frame.status],
@@ -190,6 +200,18 @@ export class EvenDevice {
             ))
           )
             throw new Error("G2 文字发送失败");
+        }
+        if (frame.version !== this.version || !this.connected) return;
+        if (frame.icon && frame.icon.key !== this.iconKey) {
+          const iconResult = await this.bridge.updateImageRawData(
+            new ImageRawDataUpdate({
+              containerID: 5,
+              containerName: "maneuver",
+              imageData: Array.from(frame.icon.pixels),
+            }),
+          );
+          if (iconResult !== "success") throw new Error("G2 图标发送失败");
+          this.iconKey = frame.icon.key;
         }
         if (frame.version !== this.version || !this.connected) return;
         const result = await this.bridge.updateImageRawData(
@@ -381,6 +403,7 @@ export class EvenDevice {
       await this.bridge.shutDownPageContainer(0);
     this.bridge = undefined;
     this.pageCreated = false;
+    this.iconKey = undefined;
     this.connected = false;
     this.source = "NONE";
   }

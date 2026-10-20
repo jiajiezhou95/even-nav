@@ -96,3 +96,22 @@ Beta 0.1.3 navigation repair (2026-10-21):
 - Private Beta 0.1.4, build 116672, 73,295 bytes, SHA256 `2821a967619c483835e25cf65bfade354e8d2d95fc128315c2e64e8a73dcd77d`; public channel remains unset.
 - No Worker deployment or live provider calls for this UI-only delta. Existing provider evidence is reused.
 - Pending user hardware observation: selected map with horizontal tabs, concise G2 arrows/distance during movement and step transitions. Lock-screen acceptance remains NOT RUN.
+
+### Beta 0.1.5 follow-up boundary
+
+User feedback on 0.1.4 requests visible, line-separated selected-route steps; persistent concise guidance with a separate stale-location badge; a separator before the next maneuver; larger graphical maneuver icons; and map direction. The UI-only correction preserves backend, routing and credential behavior. Provider live evidence remains reusable; no provider call is needed for this delta.
+
+Direction capability review: installed SDK 0.0.16 exposes phone `AppLocation` and raw G2 IMU x/y/z. Official device-features documentation defines phone heading in degrees from true north, but does not document a north-calibrated G2 yaw or head-facing conversion. A map movement-bearing indicator must be explicitly distinguished from head-facing orientation and suppressed without sufficient fresh, accurate displacement. True head-facing orientation is not accepted or claimed.
+
+Reference: https://github.com/even-realities/everything-evenhub/blob/main/plugins/everything-evenhub/skills/device-features/SKILL.md
+
+Additional capability evidence: Even's official hardware article confirms a geomagnetic sensor in G2. This establishes hardware potential, not an exposed Even Hub heading API. Keep the limitation at the SDK/data-contract boundary; do not claim G2 lacks a compass. https://www.evenrealities.com/blogs/even-insider/how-we-shaped-even-g2-from-the-outside-in
+
+Official Device APIs page also labels IMU generically as accelerometer/gyroscope and head orientation, but its payload table only names X/Y/Z-axis values without units, reference frame or measurement type. Therefore the payload cannot currently be asserted to be acceleration-only, nor treated as documented yaw. https://hub.evenrealities.com/docs/build/device-apis
+
+### Beta 0.1.5 delivery checkpoint
+
+- TARGETED_TEST PASS: guidance/device/direction 21/21. Browser UI first run 21/23; two affected assertions repaired, relevant rerun 3/3 PASS. These are synthetic browser/device-mock evidence, not a clean hardware E2E.
+- STATIC/BUILD PASS: TypeScript, production build and privacy scan (111 files). Phone synthetic screenshots visually reviewed for expanded steps, large icon, separator and corner GPS status.
+- DEPLOYED: private Beta 0.1.5 build 116688, 75,419 bytes. Downloaded cloud artifact matches SHA256 `d98aae386303c11320d37e3a477fb0c47a1a8c5fbb271243c2c7a202ce11d6ca`. Public channel remains unset.
+- No Worker deployment or Google/Transitous calls. Existing provider evidence reused. G2 optical layout/movement, head-facing calibration and lock-screen acceptance remain unverified on hardware.

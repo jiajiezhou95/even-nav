@@ -443,6 +443,88 @@ select {
   font-size: 28px;
   line-height: 1.5;
 }
+.guidance-current {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.maneuver-icon {
+  flex: 0 0 64px;
+  width: 64px;
+  height: 64px;
+  display: inline-block;
+}
+.maneuver-icon[data-icon="none"] {
+  display: none;
+}
+.maneuver-icon svg {
+  width: 100%;
+  height: 100%;
+}
+#nav-current-text,
+#nav-step-distance {
+  display: block;
+}
+#nav-step-distance {
+  font-size: 23px;
+}
+#nav-step-distance.distance-unavailable {
+  font-size: 16px;
+  color: #946335;
+}
+.guidance-next {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid #dce3d2;
+  margin-top: 18px;
+  padding-top: 16px;
+  font-size: 20px;
+}
+.guidance-next[hidden] {
+  display: none;
+}
+.guidance-next .maneuver-icon {
+  flex-basis: 34px;
+  width: 34px;
+  height: 34px;
+}
+.next-label {
+  color: #788371;
+  font-size: 12px;
+}
+.gps-status {
+  text-align: right;
+  font-size: 11px;
+  margin: 8px 0 4px;
+}
+.itinerary-steps {
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+}
+.itinerary-steps > li {
+  display: flex;
+  gap: 10px;
+  padding: 10px 0;
+  align-items: baseline;
+  border-top: 1px solid #edf0e7;
+  font-size: 13px;
+}
+.itinerary-steps > li > span {
+  white-space: pre-line;
+  flex: 1;
+  min-width: 0;
+}
+.itinerary-steps small {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: #788371;
+}
+.legs > li > div {
+  min-width: 0;
+  flex: 1;
+}
 .navigation .big-distance {
   font-size: 18px;
   color: #788371;

@@ -44,7 +44,7 @@ describe("compact structured navigation guidance", () => {
   it("ignores compound multiline prose and includes only one structured upcoming maneuver", () => {
     const state = start().snapshot;
     expect(conciseInstruction(state, "WALK", now)).toMatch(
-      /^↑ 直行\n本段剩余 \d+ m\n下一步：→ 向右转$/,
+      /^直行\n本段剩余 \d+ m\n\n下一步：向右转$/,
     );
     expect(conciseInstruction(state, "WALK", now)).not.toMatch(
       /商店|地标|左转|未来步骤原文/,
@@ -60,7 +60,7 @@ describe("compact structured navigation guidance", () => {
     );
     expect(session.snapshot.stepRemainingMeters).toBeLessThan(first);
     const midpoint = conciseInstruction(session.snapshot, "WALK", now + 5000);
-    expect(midpoint).toContain("下一步：→ 向右转");
+    expect(midpoint).toContain("下一步：向右转");
     expect(conciseInstruction(session.snapshot, "WALK", now + 6000)).toBe(
       midpoint,
     );
@@ -70,15 +70,17 @@ describe("compact structured navigation guidance", () => {
     );
     expect(session.snapshot.stepIndex).toBe(1);
     expect(conciseInstruction(session.snapshot, "WALK", now + 10000)).toMatch(
-      /^↑ 沿路线前行\n本段剩余 \d+ m\n下一步：← 向左转$/,
+      /^沿路线前行\n本段剩余 \d+ m\n\n下一步：向左转$/,
     );
     expect(currentStepDetail(session.snapshot)).toBe("未来步骤原文1");
   });
-  it("hides distance and turn cues when stale instead of interpolating progress", () => {
+  it("retains planned action while marking stale distance unavailable, never interpolating", () => {
     const state = start().snapshot;
     const stale = conciseInstruction(state, "WALK", now + 5001);
-    expect(stale).toContain("定位已过期");
-    expect(stale).not.toMatch(/本段剩余|下一步| m/);
+    expect(stale).toContain("直行");
+    expect(stale).toContain("距离暂不可用");
+    expect(stale).toContain("下一步：向右转");
+    expect(stale).not.toMatch(/本段剩余| m|定位已过期/);
     state.paused = true;
     expect(conciseInstruction(state, "WALK", now)).toBe("导航已暂停");
   });
@@ -89,15 +91,15 @@ describe("compact structured navigation guidance", () => {
       state.route!.legs[0].steps[0].maneuver = maneuver;
       state.route!.legs[0].steps[1].maneuver = maneuver;
       expect(conciseInstruction(state, "WALK", now)).toMatch(
-        /^↑ 沿路线前行\n本段剩余 \d+ m$/,
+        /^沿路线前行\n本段剩余 \d+ m$/,
       );
     },
   );
   it("preserves a structured special action and does not leave DEPART as a waiting prompt", () => {
     const state = start().snapshot;
     state.route!.legs[0].steps[0].maneuver = "RAMP_LEFT";
-    expect(conciseInstruction(state, "DRIVE", now)).toContain("← 从左侧上匝道");
+    expect(conciseInstruction(state, "DRIVE", now)).toContain("从左侧上匝道");
     state.route!.legs[0].steps[0].maneuver = "DEPART";
-    expect(conciseInstruction(state, "WALK", now)).toMatch(/^↑ 沿路线前行/);
+    expect(conciseInstruction(state, "WALK", now)).toMatch(/^沿路线前行/);
   });
 });

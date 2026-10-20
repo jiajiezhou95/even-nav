@@ -290,8 +290,14 @@ test("navigation shows arrow and changing distance with one next cue, not compou
   await page.getByRole("button", { name: "确认目的地，查询路线" }).click();
   await page.getByRole("button", { name: "开始导航 ↗" }).click();
   const heading = page.locator("#nav-instruction");
-  await expect(heading).toContainText("↑ 直行");
-  await expect(heading).toContainText("下一步：→ 向右转");
+  await expect(heading).toContainText("直行");
+  await expect(page.locator("#nav-current-icon svg")).toBeVisible();
+  await expect(page.locator("#nav-next-text")).toHaveText("向右转");
+  expect(
+    await page
+      .locator("#nav-next")
+      .evaluate((el) => getComputedStyle(el).borderTopStyle),
+  ).toBe("solid");
   await expect(heading).not.toContainText("合成商店");
   const distanceValue = async () =>
     Number((await heading.textContent())!.match(/本段剩余 (\d+) m/)![1]);
@@ -309,7 +315,7 @@ test("navigation shows arrow and changing distance with one next cue, not compou
       window as unknown as { emitSyntheticFix: (lng: number) => void }
     ).emitSyntheticFix(139.7682),
   );
-  await expect(heading).toContainText("下一步：← 向左转");
+  await expect(page.locator("#nav-next-text")).toHaveText("向左转");
   await expect(heading).not.toContainText("向右转");
   await expect(page.locator("#current-step-detail")).toBeHidden();
   await page.getByText("当前步骤详情", { exact: true }).click();
@@ -638,7 +644,28 @@ test("horizontal route tabs show selected road map without more tile calls and f
                 { lat: 35.6812 + i * 0.0015, lng: 139.77 },
                 request.destination.coordinate,
               ],
-              steps: [],
+              steps: [
+                {
+                  instruction: "沿合成大道前行",
+                  maneuver: "STRAIGHT",
+                  geometry: [
+                    request.origin,
+                    { lat: 35.6812 + i * 0.0015, lng: 139.77 },
+                  ],
+                  distanceMeters: 200,
+                  durationSeconds: 90,
+                },
+                {
+                  instruction: "在合成路口向右转",
+                  maneuver: "TURN_RIGHT",
+                  geometry: [
+                    { lat: 35.6812 + i * 0.0015, lng: 139.77 },
+                    request.destination.coordinate,
+                  ],
+                  distanceMeters: 200,
+                  durationSeconds: 90,
+                },
+              ],
             },
           ],
         })),
@@ -666,7 +693,22 @@ test("horizontal route tabs show selected road map without more tile calls and f
   const mapBox = await canvas.boundingBox(),
     tabsBox = await page.getByRole("tablist").boundingBox();
   expect(mapBox!.y + mapBox!.height).toBeLessThan(tabsBox!.y);
-  expect(await page.locator(".route-card details[open]").count()).toBe(0);
+  await expect(
+    page.locator(".selected-itinerary .itinerary-steps > li"),
+  ).toHaveCount(2);
+  await expect(
+    page
+      .locator(".selected-itinerary")
+      .getByText("沿合成大道前行", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page
+      .locator(".selected-itinerary")
+      .getByText("在合成路口向右转", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.locator("#route-summary details .selected-itinerary"),
+  ).toHaveCount(0);
   const callsBefore = tileCalls;
   const first = await canvas.evaluate((el: HTMLCanvasElement) =>
     el.toDataURL(),
@@ -749,7 +791,7 @@ test("G2 PNG keeps real tile detail bright on black and distinguishes route and 
     bitmap.close();
     const pixel = (x: number, y: number) =>
       Array.from(ctx.getImageData(x, y, 1, 1).data);
-    return {
+    const base = {
       base64: output.toDataURL().split(",")[1],
       background: pixel(20, 40),
       road: pixel(20, 20),
@@ -758,6 +800,44 @@ test("G2 PNG keeps real tile detail bright on black and distinguishes route and 
       halo: pixel(150, 72),
       attribution: renderer.attribution,
     };
+    await renderer.draw(center, { coordinate: b }, route, center, [], {
+      bearing: 90,
+      timestamp: Date.now(),
+      maxAgeMs: 5000,
+    });
+    const movingBitmap = await createImageBitmap(
+      new Blob([await renderer.pixels()], { type: "image/png" }),
+    );
+    ctx.drawImage(movingBitmap, 0, 0);
+    movingBitmap.close();
+    const movement = pixel(155, 69)[0],
+      movementPng = output.toDataURL().split(",")[1];
+    await renderer.draw(center, { coordinate: b }, route, center, [], {
+      bearing: 90,
+      timestamp: Date.now() - 10000,
+      maxAgeMs: 5000,
+    });
+    const staleBitmap = await createImageBitmap(
+      new Blob([await renderer.pixels()], { type: "image/png" }),
+    );
+    ctx.drawImage(staleBitmap, 0, 0);
+    staleBitmap.close();
+    const iconPath = "/src/maneuver-icons.ts",
+      { maneuverPng } = await import(iconPath);
+    const iconBytes = await maneuverPng("left");
+    const icon = await createImageBitmap(
+      new Blob([iconBytes], { type: "image/png" }),
+    );
+    const dimensions = [icon.width, icon.height];
+    icon.close();
+    return {
+      ...base,
+      movement,
+      staleMovement: pixel(155, 69)[0],
+      movementPng,
+      iconDimensions: dimensions,
+      iconPng: btoa(String.fromCharCode(...iconBytes)),
+    };
   });
   expect(result.background.slice(0, 3)).toEqual([0, 0, 0]);
   expect(result.road[0]).toBeGreaterThanOrEqual(200);
@@ -765,10 +845,21 @@ test("G2 PNG keeps real tile detail bright on black and distinguishes route and 
   expect(result.current.slice(0, 3)).toEqual([255, 255, 255]);
   expect(result.halo[0]).toBeLessThan(30);
   expect(result.attribution).toContain("Synthetic contrast fixture");
+  expect(result.movement).toBeGreaterThan(200);
+  expect(result.staleMovement).toBeLessThan(30);
+  expect(result.iconDimensions).toEqual([48, 48]);
   await mkdir(testInfo.outputDir, { recursive: true });
   await writeFile(
     testInfo.outputPath("g2-contrast-synthetic.png"),
     Buffer.from(result.base64, "base64"),
+  );
+  await writeFile(
+    testInfo.outputPath("g2-direction-synthetic.png"),
+    Buffer.from(result.movementPng, "base64"),
+  );
+  await writeFile(
+    testInfo.outputPath("g2-vector-icon.png"),
+    Buffer.from(result.iconPng, "base64"),
   );
 });
 test("device pairing survives reload without owner entry or another pair request", async ({
@@ -1147,6 +1238,14 @@ test("failed return location pauses visibly and explicit resume restores ticks",
     page.getByRole("button", { name: "暂停", exact: true }),
   ).toBeVisible();
   await page.clock.runFor(6000);
-  await expect(page.locator("#nav-instruction")).toContainText("定位已过期");
+  await expect(page.locator("#nav-current-text")).toHaveText("沿路线前行");
+  await expect(page.locator("#nav-fix")).toContainText("定位过期");
+  await expect(page.locator("#nav-step-distance")).toHaveText("距离暂不可用");
+  expect(
+    await page
+      .locator("#nav-fix")
+      .evaluate((el) => getComputedStyle(el).textAlign),
+  ).toBe("right");
+  await expect(page.locator("#nav-distance")).toHaveText("—");
   await expect(page.locator("#nav-instruction")).not.toContainText("本段剩余");
 });

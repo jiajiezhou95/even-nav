@@ -5,10 +5,15 @@ import { staleInstruction } from "./freshness";
 
 describe("official SDK boundary and display queue", () => {
   it("fully replaces each current-step text and submits new map bytes in order", async () => {
-    const sent: { containerID: number; content: string; contentOffset: number; contentLength: number }[] = [];
+    const sent: {
+      containerID: number;
+      content: string;
+      contentOffset: number;
+      contentLength: number;
+    }[] = [];
     const images: number[][] = [];
     const bridge = {
-      createStartUpPageContainer: vi.fn(async () => 0),
+      createStartUpPageContainer: vi.fn(async (_value: unknown) => 0),
       textContainerUpgrade: vi.fn(async (value) => {
         sent.push(value);
         return true;
@@ -18,21 +23,69 @@ describe("official SDK boundary and display queue", () => {
         return "success";
       }),
     };
-    const device = new EvenDevice(() => {}, () => {}, () => {});
+    const device = new EvenDevice(
+      () => {},
+      () => {},
+      () => {},
+    );
     Object.assign(device, { bridge, connected: true, source: "EVEN" });
     device.setVersion(1);
-    const frame = (sequence: number, instruction: string) => ({
-      sequence, version: 1, instruction, pixels: new Uint8Array([sequence]),
-      status: "测试定位", attribution: "Synthetic map",
+    const frame = (
+      sequence: number,
+      instruction: string,
+      iconKey = "left",
+    ) => ({
+      sequence,
+      version: 1,
+      instruction,
+      pixels: new Uint8Array([sequence]),
+      status: "测试定位",
+      attribution: "Synthetic map",
+      icon: {
+        key: iconKey,
+        pixels: new Uint8Array([iconKey === "left" ? 9 : 8]),
+      },
     });
     device.queue.push(frame(1, "沿架空道路继续前行至下一个路口"));
     await vi.waitFor(() => expect(device.lastSubmission?.sequence).toBe(1));
     device.queue.push(frame(2, "向左转"));
     await vi.waitFor(() => expect(device.lastSubmission?.sequence).toBe(2));
-    expect(sent.filter(value => value.containerID === 2).map(value => value.content))
-      .toEqual(["沿架空道路继续前行至下一个路口", "向左转"]);
-    expect(sent.every(value => value.contentOffset === 0 && value.contentLength === 0)).toBe(true);
-    expect(images).toEqual([[1], [2]]);
+    device.queue.push(frame(3, "向右转", "right"));
+    await vi.waitFor(() => expect(device.lastSubmission?.sequence).toBe(3));
+    expect(
+      sent
+        .filter((value) => value.containerID === 2)
+        .map((value) => value.content),
+    ).toEqual(["沿架空道路继续前行至下一个路口", "向左转", "向右转"]);
+    expect(
+      sent.every(
+        (value) => value.contentOffset === 0 && value.contentLength === 0,
+      ),
+    ).toBe(true);
+    expect(images).toEqual([[9], [1], [2], [8], [3]]);
+    expect(bridge.createStartUpPageContainer.mock.calls[0][0]).toMatchObject({
+      containerTotalNum: 5,
+      imageObject: expect.arrayContaining([
+        expect.objectContaining({
+          containerID: 5,
+          xPosition: 300,
+          yPosition: 0,
+          width: 48,
+          height: 48,
+        }),
+      ]),
+      textObject: expect.arrayContaining([
+        expect.objectContaining({ containerID: 2, xPosition: 360, width: 216 }),
+        expect.objectContaining({
+          containerID: 3,
+          xPosition: 300,
+          yPosition: 150,
+          width: 276,
+          height: 54,
+        }),
+        expect.objectContaining({ containerID: 4, yPosition: 208 }),
+      ]),
+    });
   });
   it("coalesces concurrent native starts and awaits pending start before stopping", async () => {
     let release!: (value: boolean) => void;
