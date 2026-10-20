@@ -1,0 +1,89 @@
+{
+  "evidence": "LIVE_LINK_EXPANSION",
+  "time": "2026-10-20T14:13:54.669Z",
+  "rows": [
+    {
+      "sample": 1,
+      "kind": "place",
+      "expansion": "PASS",
+      "endpoint": "BLOCKED_ENRICHMENT",
+      "status": "BLOCKED"
+    },
+    {
+      "sample": 2,
+      "kind": "place",
+      "expansion": "PASS",
+      "endpoint": "BLOCKED_ENRICHMENT",
+      "status": "BLOCKED"
+    },
+    {
+      "sample": 3,
+      "kind": "directions",
+      "expansion": "PASS",
+      "endpoint": "BLOCKED_ENRICHMENT",
+      "status": "BLOCKED"
+    },
+    {
+      "sample": 4,
+      "kind": "directions",
+      "expansion": "PASS",
+      "endpoint": "BLOCKED_ENRICHMENT",
+      "status": "BLOCKED"
+    },
+    {
+      "sample": 5,
+      "kind": "directions",
+      "expansion": "PASS",
+      "endpoint": "BLOCKED_ENRICHMENT",
+      "status": "BLOCKED"
+    },
+    {
+      "sample": 6,
+      "kind": "place",
+      "expansion": "PASS",
+      "endpoint": "BLOCKED_ENRICHMENT",
+      "status": "BLOCKED"
+    },
+    {
+      "sample": 7,
+      "kind": "place",
+      "expansion": "PASS",
+      "endpoint": "BLOCKED_ENRICHMENT",
+      "status": "BLOCKED"
+    },
+    {
+      "sample": 8,
+      "kind": "place",
+      "expansion": "PASS",
+      "endpoint": "BLOCKED_ENRICHMENT",
+      "status": "BLOCKED"
+    },
+    {
+      "sample": 9,
+      "kind": "place",
+      "expansion": "PASS",
+      "endpoint": "BLOCKED_ENRICHMENT",
+      "status": "BLOCKED"
+    },
+    {
+      "sample": 10,
+      "kind": "place",
+      "expansion": "PASS",
+      "endpoint": "BLOCKED_ENRICHMENT",
+      "status": "BLOCKED"
+    },
+    {
+      "sample": 11,
+      "kind": "place",
+      "expansion": "PASS",
+      "endpoint": "BLOCKED_ENRICHMENT",
+      "status": "BLOCKED"
+    },
+    {
+      "sample": 12,
+      "kind": "list-unsupported",
+      "status": "FAIL",
+      "code": "DESTINATION_MISSING"
+    }
+  ]
+}

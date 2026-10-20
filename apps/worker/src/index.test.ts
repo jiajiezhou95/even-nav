@@ -1,0 +1,250 @@
+import { describe, it, expect, vi } from "vitest";
+import { createWorker, type Env } from "./index";
+import { QuotaLedger, type Store, type QuotaNamespace } from "./quota";
+import { resolveImport } from "./resolver";
+import type { Fetcher } from "../../../packages/providers/src/index";
+class Memory implements Store {
+  data = new Map<string, unknown>();
+  tail: Promise<unknown> = Promise.resolve();
+  async get<T>(k: string) {
+    return structuredClone(this.data.get(k)) as T | undefined;
+  }
+  async put<T>(k: string, v: T) {
+    this.data.set(k, structuredClone(v));
+  }
+  async transaction<T>(f: (s: Store) => Promise<T>): Promise<T> {
+    const next = this.tail.then(() => f(this));
+    this.tail = next.catch(() => {});
+    return next;
+  }
+}
+const token = "synthetic-test-token-not-a-secret";
+const namespace = (ledger: QuotaLedger): QuotaNamespace => ({
+  idFromName: () => 1,
+  get: () => ({
+    fetch: (r, i) => ledger.fetch(r instanceof Request ? r : new Request(r, i)),
+  }),
+});
+const env = (): Env => ({
+  ACCESS_TOKEN: token,
+  QUOTA: namespace(new QuotaLedger({ storage: new Memory() })),
+  ALLOWED_ORIGINS: "https://app.example",
+});
+const req = (path: string, body?: unknown, auth = token) =>
+  new Request(`https://worker.test${path}`, {
+    method: body === undefined ? "GET" : "POST",
+    headers: {
+      Authorization: `Bearer ${auth}`,
+      "Content-Type": "application/json",
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+describe("quota durability and security", () => {
+  it("atomically reserves cap across concurrent requests and object recreation", async () => {
+    const storage = new Memory();
+    const make = () =>
+      new QuotaLedger(
+        { storage },
+        { MONTHLY_CAPS: JSON.stringify({ TILES: 3 }) },
+      );
+    const ask = (l: QuotaLedger) =>
+      l.fetch(
+        new Request("https://quota", {
+          method: "POST",
+          body: JSON.stringify({ sku: "TILES" }),
+        }),
+      );
+    const r = await Promise.all(Array.from({ length: 10 }, () => ask(make())));
+    expect(r.filter((x) => x.ok)).toHaveLength(3);
+    expect((await ask(make())).status).toBe(429);
+  });
+  it("rolls over month independently", async () => {
+    vi.useFakeTimers();
+    try {
+      const storage = new Memory();
+      const l = new QuotaLedger({ storage }, { MONTHLY_CAPS: '{"TILES":1}' });
+      const ask = () =>
+        l.fetch(
+          new Request("https://quota", {
+            method: "POST",
+            body: '{"sku":"TILES"}',
+          }),
+        );
+      vi.setSystemTime(new Date("2026-01-31T23:59:00Z"));
+      expect((await ask()).ok).toBe(true);
+      expect((await ask()).status).toBe(429);
+      vi.setSystemTime(new Date("2026-02-01T00:00:01Z"));
+      expect((await ask()).ok).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("reports actual warning state and reserved-operation terminology", async () => {
+    const l = new QuotaLedger(
+      { storage: new Memory() },
+      { MONTHLY_CAPS: '{"TILES":5}' },
+    );
+    for (let i = 0; i < 4; i++)
+      await l.fetch(
+        new Request("https://quota", {
+          method: "POST",
+          body: '{"sku":"TILES"}',
+        }),
+      );
+    const data = await (await l.fetch(new Request("https://quota"))).json();
+    expect(data.warnings.TILES).toEqual({ remaining: 1, level: "80_PERCENT" });
+    expect(data.reservedOperations).toBe(4);
+    expect(data.httpRequests).toBeUndefined();
+  });
+  it("static cap cannot be enabled and storage failures close", async () => {
+    const storage = new Memory();
+    const l = new QuotaLedger({ storage });
+    expect(
+      (
+        await l.fetch(
+          new Request("https://quota", {
+            method: "POST",
+            body: '{"sku":"STATIC"}',
+          }),
+        )
+      ).status,
+    ).toBe(429);
+    storage.transaction = async () => {
+      throw Error("internal secret");
+    };
+    expect(
+      (
+        await l.fetch(
+          new Request("https://quota", {
+            method: "POST",
+            body: '{"sku":"TILES"}',
+          }),
+        )
+      ).status,
+    ).toBe(503);
+  });
+  it("fails auth before provider and quota", async () => {
+    const f = vi.fn() as unknown as Fetcher;
+    const e = env();
+    e.QUOTA = undefined;
+    const r = await createWorker(f).fetch(
+      req("/v1/maps/google/session", {}, "bad"),
+      e,
+    );
+    expect(r.status).toBe(401);
+    expect(f).not.toHaveBeenCalled();
+  });
+  it("rejects revoked token", async () =>
+    expect(
+      (
+        await createWorker().fetch(req("/v1/providers"), {
+          ...env(),
+          ACCESS_TOKEN: "new-synthetic-test-token-revoked",
+        })
+      ).status,
+    ).toBe(401));
+  it("rejects unauthorized CORS origin", async () => {
+    const r = req("/v1/providers");
+    r.headers.set("Origin", "https://evil.test");
+    expect((await createWorker().fetch(r, env())).status).toBe(401);
+  });
+  it("never exposes tokens in capabilities", async () => {
+    const r = await createWorker().fetch(req("/v1/providers"), {
+      ...env(),
+      GOOGLE_API_KEY: "synthetic-key",
+    });
+    const s = await r.text();
+    expect(s).not.toContain(token);
+    expect(s).not.toContain("synthetic-key");
+  });
+  it("rejects invalid tiles before key/quota", async () =>
+    expect(
+      (
+        await createWorker().fetch(
+          req("/v1/maps/google/tiles/3/9/0?session=synthetic"),
+          env(),
+        )
+      ).status,
+    ).toBe(400));
+  it("rejects oversized input without upstream", async () => {
+    const f = vi.fn() as unknown as Fetcher;
+    expect(
+      (
+        await createWorker(f).fetch(
+          req("/v1/import/resolve", { text: "a".repeat(17000) }),
+          env(),
+        )
+      ).status,
+    ).toBe(400);
+    expect(f).not.toHaveBeenCalled();
+  });
+});
+describe("bounded resolver", () => {
+  const full = "https://www.google.com/maps/search/?api=1&query=0,0";
+  it("never fetches full links", async () => {
+    const f = vi.fn() as unknown as Fetcher;
+    expect(
+      (await resolveImport(full, f)).destinationCandidates[0].coordinate,
+    ).toEqual({ lat: 0, lng: 0 });
+    expect(f).not.toHaveBeenCalled();
+  });
+  it("follows safe redirect without forwarding credentials", async () => {
+    const f = vi.fn(
+      async () =>
+        new Response(null, { status: 302, headers: { Location: full } }),
+    ) as unknown as Fetcher;
+    expect(
+      (await resolveImport("https://maps.app.goo.gl/Synthetic", f))
+        .selectedGoogleItineraryImported,
+    ).toBe(false);
+    const init = vi.mocked(f).mock.calls[0][1]!;
+    expect(init.redirect).toBe("manual");
+    expect(new Headers(init.headers).has("Authorization")).toBe(false);
+  });
+  it.each([
+    "http://127.0.0.1/",
+    "https://google.com.evil.test/maps",
+    "https://user:pass@www.google.com/maps",
+    "https://www.google.com/url?url=https://127.0.0.1",
+    "https://[::1]/",
+  ])("rejects unsafe redirect %s", async (location) => {
+    const f = vi.fn(
+      async () =>
+        new Response(null, { status: 302, headers: { Location: location } }),
+    ) as unknown as Fetcher;
+    await expect(
+      resolveImport("https://maps.app.goo.gl/Synthetic", f),
+    ).rejects.toThrow();
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+  it("detects loop", async () => {
+    const f = vi.fn(
+      async () =>
+        new Response(null, {
+          status: 302,
+          headers: { Location: "https://maps.app.goo.gl/Synthetic" },
+        }),
+    ) as unknown as Fetcher;
+    await expect(
+      resolveImport("https://maps.app.goo.gl/Synthetic", f),
+    ).rejects.toMatchObject({ code: "REDIRECT_LOOP" });
+  });
+  it("HEAD failure falls back to bounded GET", async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 405 }))
+      .mockResolvedValueOnce(
+        new Response(null, { status: 302, headers: { Location: full } }),
+      ) as unknown as Fetcher;
+    await resolveImport("https://maps.app.goo.gl/Synthetic", f);
+    expect(vi.mocked(f).mock.calls[1][1]?.method).toBe("GET");
+  });
+  it("refuses script-only link page", async () => {
+    const f = vi.fn(
+      async () => new Response("<script>private</script>"),
+    ) as unknown as Fetcher;
+    await expect(
+      resolveImport("https://maps.app.goo.gl/Synthetic", f),
+    ).rejects.toMatchObject({ code: "LINK_RESOLUTION_BLOCKED" });
+  });
+});

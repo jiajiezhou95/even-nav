@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "files": ["dist/**", "app.json"],
+  "exclude": [".local/**", "**/*.local.json", ".env*", "**/*.log"]
+}

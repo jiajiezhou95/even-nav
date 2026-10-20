@@ -1,0 +1,18 @@
+{
+  "collectedAt": "2026-10-20",
+  "notes": "Publicly published links; creation device unknown. These do not prove iPhone-origin sharing. Live tests are opt-in, never CI dependencies.",
+  "samples": [
+    {"url":"https://maps.app.goo.gl/c7YLKGbSzJ3AD6Ue9","source":"https://t-navi.city.taito.lg.jp/spot/1030","kind":"place"},
+    {"url":"https://maps.app.goo.gl/X1EQ897UkLcMUBCo7","source":"https://www.jha.or.jp/jp/whatsnew/2024/07/20240708_3.pdf","kind":"place"},
+    {"url":"https://maps.app.goo.gl/EQMFfZiHRXM4PP4f9","source":"https://www.jha.or.jp/jp/whatsnew/2024/07/20240708_3.pdf","kind":"directions"},
+    {"url":"https://maps.app.goo.gl/6qw9fjixzcLsH2Xf9","source":"https://www.jha.or.jp/jp/whatsnew/2024/07/20240708_3.pdf","kind":"directions"},
+    {"url":"https://maps.app.goo.gl/Z27H3932dhZH4JMc6","source":"https://www.jha.or.jp/jp/whatsnew/2024/07/20240708_3.pdf","kind":"directions"},
+    {"url":"https://maps.app.goo.gl/bizZdfJvJJZeWz7s9","source":"https://en.stylem.co.jp/company/access/stylem_tokyo/","kind":"place"},
+    {"url":"https://maps.app.goo.gl/QVs4a34HD9qnvjUo8","source":"https://asset.japan.travel/image/upload/v1706576501/pdf/PLANETS_Co._Ltd_20240126.pdf","kind":"place"},
+    {"url":"https://maps.app.goo.gl/KCu4BqsrbXNy7z2HA","source":"https://www.marunouchi.com/en/tenants/20070/","kind":"place"},
+    {"url":"https://maps.app.goo.gl/nwBvpAREVwnQQ3qc7","source":"https://wiki.unece.org/download/attachments/224002637/FRAV-VMAD-01-10.pdf?api=v2","kind":"place"},
+    {"url":"https://maps.app.goo.gl/4jmwcPiymTD1pTNM6","source":"https://prtimes.jp/a/?c=43074&f=d43074-80-2eede9de008b74973997338a23c840c5.pdf&r=80","kind":"place"},
+    {"url":"https://maps.app.goo.gl/w5zTw37ffrSvurR5A","source":"https://corp.tokyo-calendar.jp/article/8055","kind":"place"},
+    {"url":"https://maps.app.goo.gl/2C3pc4CzMwr4EKXL8","source":"https://www.tokyo-park.or.jp/park/rinshinomori/news/2023/51678.html","kind":"list-unsupported"}
+  ]
+}

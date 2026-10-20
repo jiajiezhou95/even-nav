@@ -1,0 +1,11 @@
+{
+  "evidence": "LIVE_PROVIDER_DEPLOYED_WORKER",
+  "at": "2026-10-20T14:16:39.356Z",
+  "status": "FAIL",
+  "http": 502,
+  "error": "PROVIDER_UNAVAILABLE",
+  "diagnostic": {
+    "stage": "TRANSPORT"
+  },
+  "calls": 1
+}
