@@ -5,6 +5,7 @@ import { staleInstruction } from "./freshness";
 import { getEvenBridge } from "./runtime";
 import {
   CreateStartUpPageContainer,
+  RebuildPageContainer,
   validateEvenHubPageContainer,
   type EvenHubEvent,
 } from "@evenrealities/even_hub_sdk";
@@ -249,6 +250,7 @@ describe("official SDK boundary and display queue", () => {
       const health = vi.fn();
       const bridge = {
         createStartUpPageContainer: vi.fn(async () => code),
+        rebuildPageContainer: vi.fn(async () => false),
         updateImageRawData: vi.fn(),
       };
       const device = new EvenDevice(
@@ -271,15 +273,101 @@ describe("official SDK boundary and display queue", () => {
       expect(bridge.updateImageRawData).not.toHaveBeenCalled();
       expect(device.lastDisplayFailure).toMatchObject({
         stage: "PAGE",
-        code: `${name}(${code})`,
+        code:
+          code === 1
+            ? "create-invalid(1)/rebuild-invalid"
+            : `create-${name}(${code})`,
       });
+      expect(bridge.rebuildPageContainer).toHaveBeenCalledTimes(
+        code === 1 ? 1 : 0,
+      );
       expect(device.connected).toBe(true);
       expect(health).toHaveBeenCalledWith(
         expect.stringContaining("设备仍已连接"),
       );
       expect(device.lastSubmission).toBeUndefined();
+      // The next timer frame must not repeat rejected native creation/rebuild.
+      device.queue.push({
+        sequence: 2,
+        version: 0,
+        pixels: new Uint8Array([1]),
+        instruction: "直行",
+        status: "",
+        attribution: "Synthetic",
+      });
+      await vi.waitFor(() => expect(health).toHaveBeenCalledTimes(2));
+      expect(bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
+      expect(bridge.rebuildPageContainer).toHaveBeenCalledTimes(
+        code === 1 ? 1 : 0,
+      );
     },
   );
+  it("recovers an existing native page with exactly one identical rebuild before sending the frame", async () => {
+    const bridge = {
+      createStartUpPageContainer: vi.fn(
+        async (_page: CreateStartUpPageContainer) => 1,
+      ),
+      rebuildPageContainer: vi.fn(async (_page: RebuildPageContainer) => true),
+      updateImageRawData: vi.fn(async () => "success"),
+    };
+    const health = vi.fn();
+    const device = new EvenDevice(
+      () => {},
+      health,
+      () => {},
+    );
+    Object.assign(device, { bridge, connected: true, source: "EVEN" });
+    const frame = {
+      sequence: 1,
+      version: 0,
+      pixels: new Uint8Array([1]),
+      instruction: "直行",
+      status: "",
+      attribution: "Synthetic",
+    };
+    device.queue.push(frame);
+    await vi.waitFor(() => expect(device.lastSubmission?.sequence).toBe(1));
+    const created = bridge.createStartUpPageContainer.mock.calls[0][0].toJson();
+    const rebuilt = bridge.rebuildPageContainer.mock.calls[0][0].toJson();
+    expect(rebuilt).toEqual(created);
+    expect(validateEvenHubPageContainer(rebuilt)).toEqual({ valid: true });
+    expect(bridge.updateImageRawData).toHaveBeenCalledTimes(4);
+    expect(health).not.toHaveBeenCalled();
+    device.queue.push({ ...frame, sequence: 2 });
+    await vi.waitFor(() => expect(device.lastSubmission?.sequence).toBe(2));
+    expect(bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
+    expect(bridge.rebuildPageContainer).toHaveBeenCalledTimes(1);
+  });
+  it("keeps create and rebuild exception stages distinct without leaking host messages", async () => {
+    const health = vi.fn();
+    const bridge = {
+      createStartUpPageContainer: vi.fn(async () => 1),
+      rebuildPageContainer: vi.fn(async () => {
+        throw new Error("host timeout with private payload");
+      }),
+      updateImageRawData: vi.fn(),
+    };
+    const device = new EvenDevice(
+      () => {},
+      health,
+      () => {},
+    );
+    Object.assign(device, { bridge, connected: true, source: "EVEN" });
+    device.queue.push({
+      sequence: 1,
+      version: 0,
+      pixels: new Uint8Array([1]),
+      instruction: "直行",
+      status: "",
+      attribution: "Synthetic",
+    });
+    await vi.waitFor(() => expect(health).toHaveBeenCalledOnce());
+    expect(device.lastDisplayFailure?.code).toBe(
+      "create-invalid(1)/rebuild-timeout",
+    );
+    expect(JSON.stringify(device.lastDisplayFailure)).not.toContain("private");
+    expect(bridge.updateImageRawData).not.toHaveBeenCalled();
+  });
   it("separates canvas failures from connectivity and clears the error only after a complete recovery frame", async () => {
     const health = vi.fn();
     const bridge = {
@@ -320,6 +408,7 @@ describe("official SDK boundary and display queue", () => {
   it("requires successful startup page before exposing IMU controls, without GPS", async () => {
     const bridge = {
       createStartUpPageContainer: vi.fn(async () => 1),
+      rebuildPageContainer: vi.fn(async () => false),
       getAppLocation: vi.fn(),
       imuControl: vi.fn(),
       onEvenHubEvent: vi.fn(),
@@ -331,7 +420,7 @@ describe("official SDK boundary and display queue", () => {
     );
     Object.assign(device, { bridge, connected: true, source: "EVEN" });
     await expect(device.prepareImuProbe()).rejects.toThrow(
-      "G2 PAGE invalid(1)",
+      "G2 PAGE create-invalid(1)/rebuild-invalid",
     );
     expect(bridge.imuControl).not.toHaveBeenCalled();
     bridge.createStartUpPageContainer.mockResolvedValue(0);

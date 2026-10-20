@@ -160,3 +160,11 @@ User also authorized a bounded G2 XYZ capture. Manual diagnostics use the public
 - Single Start button moved directly below the route map and above route1/2/3 tabs. 360px browser screenshot inspected; route3 still starts after selecting it.
 - 16 targeted device tests,2 focused browser tests,TypeScript,build and privacy119files PASS. Real SDK serialization validation PASS. No new Google/Transitous requests; prior map-provider evidence reused.
 - Private Beta build116728,80697bytes,download matches SHA256 `c7dd61feba7bc14b92b0cebde44e93bc7ccea548c66097a236fa4d260c8c2c64`. Exact-head CI on Draft PR. Hardware display repair remains WAITING_FOR_EXTERNAL_GATE.
+
+### Beta 0.1.10 — bounded native-page recovery and button spacing
+
+- Hardware0.1.9 remains FAIL at `PAGE:invalid(1)`. This is creation rejection, not a confirmed Bluetooth or image transfer fault.
+- Official startup API is one-shot; the app preserves native page on pagehide. Only startupinvalid(1) now triggers one identical-layout rebuild. Oversize/outOfMemory do not rebuild; failed creation/rebuild latches until explicit reconnect/new start, preventing1Hz native retries. No encoding,geometry,timing or container-count change.
+- Start spacing14px above/16px below;360px screenshot checked, selection/start behavior unchanged.
+- 18 targeted device tests,focused spacing browser test,TypeScript,build/privacy119files PASS. Hardware restoration remains unverified; startupandimage-channel acceptance must be distinguished.
+- Private Beta build116734,77579bytes;download SHA256 matches `b2bec1e8faac201f004ded340ecfb7aa34e384c3b47cf8aaa5fe537bb80893f9`. No Worker or provider change, no live Google calls. Exact-head CI on Draft PR.

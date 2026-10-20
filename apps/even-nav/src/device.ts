@@ -1,6 +1,7 @@
 import type { AppLocation, EvenAppBridge } from "@evenrealities/even_hub_sdk";
 import {
   CreateStartUpPageContainer,
+  RebuildPageContainer,
   ImageContainerProperty,
   TextContainerProperty,
   MenuContainerProperty,
@@ -126,6 +127,7 @@ export class EvenDevice {
   private pageCreated = false;
   private quadrantPixels: Uint8Array[] = [];
   private pageStarting?: Promise<void>;
+  private pageFailure?: DisplayError;
   private version = 0;
   private lastScrollAt = -Infinity;
   connected = false;
@@ -211,61 +213,80 @@ export class EvenDevice {
   }
   private async ensurePage() {
     if (this.pageCreated) return;
+    if (this.pageFailure) throw this.pageFailure;
     if (!this.bridge || !this.connected) throw new Error("请先连接 G2");
     if (this.pageStarting) return this.pageStarting;
     this.pageStarting = this.createPage();
     try {
       await this.pageStarting;
+    } catch (error) {
+      if (error instanceof DisplayError) this.pageFailure = error;
+      throw error;
     } finally {
       this.pageStarting = undefined;
     }
   }
   private async createPage() {
+    const page = new CreateStartUpPageContainer({
+      containerTotalNum: 5,
+      imageObject: HUD_QUADRANTS.map(
+        (tile) =>
+          new ImageContainerProperty({
+            containerID: tile.id,
+            containerName: tile.name,
+            xPosition: tile.x,
+            yPosition: tile.y,
+            width: 288,
+            height: 144,
+          }),
+      ),
+      // Legacy-compatible event capture in the blank header gap, without layering.
+      textObject: [
+        new TextContainerProperty({
+          containerID: 5,
+          containerName: "hud-events",
+          xPosition: 300,
+          yPosition: 0,
+          width: 20,
+          height: 20,
+          content: " ",
+          isEventCapture: 1,
+        }),
+      ],
+      menuObject: new MenuContainerProperty({
+        menuItems: [
+          new MenuItemProperty({ itemID: 1, itemName: "暂停" }),
+          new MenuItemProperty({ itemID: 2, itemName: "继续" }),
+          new MenuItemProperty({ itemID: 3, itemName: "结束" }),
+        ],
+      }),
+    });
     let result;
     try {
-      result = await this.bridge!.createStartUpPageContainer(
-        new CreateStartUpPageContainer({
-          containerTotalNum: 5,
-          imageObject: HUD_QUADRANTS.map(
-            (tile) =>
-              new ImageContainerProperty({
-                containerID: tile.id,
-                containerName: tile.name,
-                xPosition: tile.x,
-                yPosition: tile.y,
-                width: 288,
-                height: 144,
-              }),
-          ),
-          // Legacy-compatible event capture in the blank header gap, without layering.
-          textObject: [
-            new TextContainerProperty({
-              containerID: 5,
-              containerName: "hud-events",
-              xPosition: 300,
-              yPosition: 0,
-              width: 20,
-              height: 20,
-              content: " ",
-              isEventCapture: 1,
-            }),
-          ],
-          menuObject: new MenuContainerProperty({
-            menuItems: [
-              new MenuItemProperty({ itemID: 1, itemName: "暂停" }),
-              new MenuItemProperty({ itemID: 2, itemName: "继续" }),
-              new MenuItemProperty({ itemID: 3, itemName: "结束" }),
-            ],
-          }),
-        }),
-      );
+      result = await this.bridge!.createStartUpPageContainer(page);
     } catch (error) {
-      throw new DisplayError("PAGE", exceptionCode(error));
+      throw new DisplayError("PAGE", `create-${exceptionCode(error)}`);
     }
-    if (result !== 0) {
+    if (result === 1) {
+      // A native page can outlive this WebView (pagehide intentionally preserves it).
+      // Rebuild the identical page once; do not change geometry or guess a fallback.
+      let rebuilt;
+      try {
+        rebuilt = await this.bridge!.rebuildPageContainer(
+          new RebuildPageContainer(page),
+        );
+      } catch (error) {
+        throw new DisplayError(
+          "PAGE",
+          `create-invalid(1)/rebuild-${exceptionCode(error)}`,
+        );
+      }
+      if (!rebuilt)
+        throw new DisplayError("PAGE", "create-invalid(1)/rebuild-invalid");
+    } else if (result !== 0) {
       const code =
         ["success", "invalid", "oversize", "outOfMemory"][result] || "unknown";
-      throw new DisplayError("PAGE", `${code}(${result})`);
+      throw new DisplayError("PAGE", `create-${code}(${result})`);
     }
     this.pageCreated = true;
   }
@@ -279,7 +300,11 @@ export class EvenDevice {
   }
   async connect() {
     if (this.connecting) return this.connecting;
-    if (this.bridge) return;
+    if (this.bridge) {
+      // A new explicit connect/start may retry; periodic display frames may not.
+      this.pageFailure = undefined;
+      return;
+    }
     this.connecting = this.connectNative();
     try {
       await this.connecting;
@@ -306,7 +331,9 @@ export class EvenDevice {
     this.connected =
       device?.model === "g2" && device.status.connectType === "connected";
     this.unsubscribeDevice = this.bridge.onDeviceStatusChanged((status) => {
+      const wasConnected = this.connected;
       this.connected = status.connectType === "connected";
+      if (!wasConnected && this.connected) this.pageFailure = undefined;
       this.queue.invalidate();
       this.quadrantPixels = [];
       this.onHealth(
@@ -467,6 +494,7 @@ export class EvenDevice {
       await this.bridge.shutDownPageContainer(0);
     this.bridge = undefined;
     this.pageCreated = false;
+    this.pageFailure = undefined;
     this.quadrantPixels = [];
     this.connected = false;
     this.source = "NONE";

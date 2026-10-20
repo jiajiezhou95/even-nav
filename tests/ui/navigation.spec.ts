@@ -710,8 +710,12 @@ test("horizontal route tabs show selected road map without more tile calls and f
   const mapBox = await page.locator(".route-map-pane").boundingBox(),
     startBox = await startButton.boundingBox(),
     tabsBox = await page.getByRole("tablist").boundingBox();
-  expect(mapBox!.y + mapBox!.height).toBeLessThanOrEqual(startBox!.y);
-  expect(startBox!.y + startBox!.height).toBeLessThanOrEqual(tabsBox!.y);
+  const mapGap = startBox!.y - (mapBox!.y + mapBox!.height);
+  const tabsGap = tabsBox!.y - (startBox!.y + startBox!.height);
+  expect(mapGap).toBeGreaterThanOrEqual(12);
+  expect(mapGap).toBeLessThanOrEqual(16);
+  expect(tabsGap).toBeGreaterThanOrEqual(12);
+  expect(tabsGap).toBeLessThanOrEqual(16);
   await expect(
     page.locator(".selected-itinerary .itinerary-steps > li"),
   ).toHaveCount(2);

@@ -409,6 +409,10 @@ select {
   grid-auto-columns: minmax(0, 1fr);
   gap: 6px;
 }
+.route-choice > #start {
+  display: block;
+  margin: 0 0 16px;
+}
 .route-tabs button {
   min-width: 0;
   padding: 10px 4px;
