@@ -656,7 +656,8 @@ test("horizontal route tabs show selected road map without more tile calls and f
               ],
               steps: [
                 {
-                  instruction: "沿合成大道前行",
+                  instruction:
+                    i === 2 ? "沿合成大道第三路线前行" : "沿合成大道前行",
                   maneuver: "STRAIGHT",
                   geometry: [
                     request.origin,
@@ -695,14 +696,22 @@ test("horizontal route tabs show selected road map without more tile calls and f
   await expect(canvas).toBeVisible();
   await expect(canvas).toBeInViewport();
   await expect(canvas).toHaveAttribute("aria-label", "路线 1 道路地图");
+  const startButton = page.getByRole("button", { name: "开始导航 ↗" });
+  await expect(startButton).toHaveCount(1);
+  await expect(startButton).toBeInViewport({ ratio: 1 });
+  await expect(
+    page.locator(".route-map-pane + #start + .route-tabs"),
+  ).toHaveCount(1);
   await expect(page.getByRole("tab")).toHaveCount(3);
   await expect(page.locator(".route-card")).toHaveCount(1);
   await expect(
     page.getByText("Walking directions are in beta. Use caution."),
   ).toHaveCount(0);
-  const mapBox = await canvas.boundingBox(),
+  const mapBox = await page.locator(".route-map-pane").boundingBox(),
+    startBox = await startButton.boundingBox(),
     tabsBox = await page.getByRole("tablist").boundingBox();
-  expect(mapBox!.y + mapBox!.height).toBeLessThan(tabsBox!.y);
+  expect(mapBox!.y + mapBox!.height).toBeLessThanOrEqual(startBox!.y);
+  expect(startBox!.y + startBox!.height).toBeLessThanOrEqual(tabsBox!.y);
   await expect(
     page.locator(".selected-itinerary .itinerary-steps > li"),
   ).toHaveCount(2);
@@ -755,6 +764,13 @@ test("horizontal route tabs show selected road map without more tile calls and f
   await page.screenshot({
     path: testInfo.outputPath("route-tabs-synthetic.png"),
   });
+  await page.screenshot({
+    path: ".local/evidence/start-below-route-map-360.png",
+  });
+  await startButton.click();
+  await expect(page.locator("#current-step-detail")).toContainText(
+    "沿合成大道第三路线前行",
+  );
 });
 test("G2 PNG keeps real tile detail bright on black and distinguishes route and current position", async ({
   page,

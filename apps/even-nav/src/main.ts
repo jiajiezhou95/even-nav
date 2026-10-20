@@ -322,6 +322,7 @@ function render() {
     const routeIndex = routes.findIndex((item) => item.id === selected);
     html += `<section class="route-choice"><div class="section-label"><span>02 / 选择路线</span><span>${modes[mode]}</span></div><h2>${escape(destination?.label || destination?.address || "前往目的地")}</h2>
       <div class="route-map-pane"><canvas id="route-preview" aria-label="路线 ${routeIndex + 1} 道路地图" hidden></canvas><p id="route-map-status" role="status">地图加载中…</p><img id="route-map-logo" class="provider-attribution" src="/attribution/google-maps.svg" alt="Google Maps" hidden><p id="route-copyright" class="attribution"></p><button id="retry-route-map" class="text-button" hidden>重试地图</button></div>
+      <button id="start" class="primary wide" ${!selected || busy ? "disabled" : ""}>开始导航 ↗</button>
       <div class="route-tabs" role="tablist" aria-label="可选路线">${routes.map((item, i) => `<button id="route-tab-${i}" role="tab" data-route="${escape(item.id)}" aria-selected="${selected === item.id}" aria-controls="route-summary" tabindex="${selected === item.id ? 0 : -1}"><span>路线 ${i + 1}</span><strong>${duration(item.durationSeconds)}</strong></button>`).join("")}</div>`;
     if (route) {
       const ride = route.legs.filter((leg) => leg.mode === "RIDE");
@@ -334,7 +335,7 @@ function render() {
       html += `<article id="route-summary" class="route-card" role="tabpanel" aria-labelledby="route-tab-${routeIndex}"><p class="route-summary-line">${distance(route.distanceMeters)} · 到达 ${time(route.legs.at(-1)?.endTime || Date.now() + route.durationSeconds * 1000)}${mode === "TRANSIT" ? ` · 步行 ${distance(walking)} · ${ride.slice(1).filter((leg) => !leg.staySeated).length} 次换乘` : ""}</p>
         <ol class="legs selected-itinerary">${itinerary(route)}</ol>${warnings.length ? `<details class="route-notes"><summary>路线备注</summary>${warnings.map((warning) => `<p class="small muted">${escape(warning)}</p>`).join("")}</details>` : ""}</article>`;
     }
-    html += `<button id="start" class="primary wide" ${!selected || busy ? "disabled" : ""}>开始导航 ↗</button></section>`;
+    html += `</section>`;
   }
   if (["NAVIGATING", "ARRIVED"].includes(state.phase)) {
     const leg = state.route?.legs[state.legIndex];

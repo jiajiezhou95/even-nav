@@ -24,6 +24,26 @@ export interface DeviceFix {
   heading?: number;
 }
 export type DeviceAction = "PAUSE" | "RESUME" | "END" | "ZOOM_IN" | "ZOOM_OUT";
+export interface DisplayFailure {
+  stage: "PAGE" | "RENDER" | "IMAGE";
+  code: string;
+  containerID?: number;
+  at: number;
+}
+class DisplayError extends Error {
+  constructor(
+    readonly stage: DisplayFailure["stage"],
+    readonly code: string,
+    readonly containerID?: number,
+  ) {
+    super(`G2 ${stage} ${code}`);
+  }
+}
+function exceptionCode(error: unknown): string {
+  if (error instanceof Error && /timeout|timed out/i.test(error.message))
+    return "timeout";
+  return error instanceof DOMException ? error.name : "exception";
+}
 export interface HudFrame {
   sequence: number;
   version: number;
@@ -112,6 +132,7 @@ export class EvenDevice {
   source: "EVEN" | "BROWSER_DEV" | "NONE" = "NONE";
   readonly queue: LatestFrameQueue<HudFrame>;
   lastSubmission?: { sequence: number; at: number; result: string };
+  lastDisplayFailure?: DisplayFailure;
   constructor(
     private onFix: (fix: DeviceFix) => void,
     private onHealth: (message: string) => void,
@@ -123,7 +144,12 @@ export class EvenDevice {
           return;
         await this.ensurePage();
         if (frame.version !== this.version || !this.connected) return;
-        const quadrants = await renderHud(frame);
+        let quadrants: Uint8Array[];
+        try {
+          quadrants = await renderHud(frame);
+        } catch (error) {
+          throw new DisplayError("RENDER", exceptionCode(error));
+        }
         // One serialized queue; check generation between every native write.
         for (const [index, tile] of HUD_QUADRANTS.entries()) {
           if (frame.version !== this.version || !this.connected) return;
@@ -134,15 +160,20 @@ export class EvenDevice {
             pixels.every((value, i) => value === previous[i])
           )
             continue;
-          const result = await this.bridge.updateImageRawData(
-            new ImageRawDataUpdate({
-              containerID: tile.id,
-              containerName: tile.name,
-              imageData: Array.from(pixels),
-            }),
-          );
+          let result;
+          try {
+            result = await this.bridge.updateImageRawData(
+              new ImageRawDataUpdate({
+                containerID: tile.id,
+                containerName: tile.name,
+                imageData: Array.from(pixels),
+              }),
+            );
+          } catch (error) {
+            throw new DisplayError("IMAGE", exceptionCode(error), tile.id);
+          }
           if (result !== "success")
-            throw new Error(`G2 图像发送失败 (${result})`);
+            throw new DisplayError("IMAGE", result, tile.id);
           if (frame.version !== this.version || !this.connected) return;
           this.quadrantPixels[index] = pixels.slice();
         }
@@ -151,8 +182,31 @@ export class EvenDevice {
           at: Date.now(),
           result: "success",
         };
+        if (this.lastDisplayFailure) {
+          this.lastDisplayFailure = undefined;
+          this.onHealth("G2 已连接，导航画面已发送");
+        }
       },
-      () => this.onHealth("G2 发送失败；请检查连接并重新连接。"),
+      (error) => {
+        const failure =
+          error instanceof DisplayError
+            ? error
+            : new DisplayError("RENDER", exceptionCode(error));
+        this.lastDisplayFailure = {
+          stage: failure.stage,
+          code: failure.code,
+          containerID: failure.containerID,
+          at: Date.now(),
+        };
+        const label = {
+          PAGE: "页面创建失败",
+          RENDER: "画面生成失败",
+          IMAGE: "图像传输失败",
+        }[failure.stage];
+        this.onHealth(
+          `G2 ${label} [${failure.stage}:${failure.code}${failure.containerID ? `，块 ${failure.containerID}/4` : ""}]${this.connected ? "；设备仍已连接" : "；设备已断开"}`,
+        );
+      },
     );
   }
   private async ensurePage() {
@@ -167,45 +221,52 @@ export class EvenDevice {
     }
   }
   private async createPage() {
-    const result = await this.bridge!.createStartUpPageContainer(
-      new CreateStartUpPageContainer({
-        containerTotalNum: 5,
-        imageObject: HUD_QUADRANTS.map(
-          (tile) =>
-            new ImageContainerProperty({
-              containerID: tile.id,
-              containerName: tile.name,
-              xPosition: tile.x,
-              yPosition: tile.y,
-              width: 288,
-              height: 144,
-              zOrderIndex: tile.id,
+    let result;
+    try {
+      result = await this.bridge!.createStartUpPageContainer(
+        new CreateStartUpPageContainer({
+          containerTotalNum: 5,
+          imageObject: HUD_QUADRANTS.map(
+            (tile) =>
+              new ImageContainerProperty({
+                containerID: tile.id,
+                containerName: tile.name,
+                xPosition: tile.x,
+                yPosition: tile.y,
+                width: 288,
+                height: 144,
+              }),
+          ),
+          // Legacy-compatible event capture in the blank header gap, without layering.
+          textObject: [
+            new TextContainerProperty({
+              containerID: 5,
+              containerName: "hud-events",
+              xPosition: 300,
+              yPosition: 0,
+              width: 20,
+              height: 20,
+              content: " ",
+              isEventCapture: 1,
             }),
-        ),
-        // Retain one native event surface below the raster, including IMU readiness.
-        textObject: [
-          new TextContainerProperty({
-            containerID: 5,
-            containerName: "hud-events",
-            xPosition: 0,
-            yPosition: 0,
-            width: 576,
-            height: 288,
-            content: " ",
-            isEventCapture: 1,
-            zOrderIndex: 0,
-          }),
-        ],
-        menuObject: new MenuContainerProperty({
-          menuItems: [
-            new MenuItemProperty({ itemID: 1, itemName: "暂停" }),
-            new MenuItemProperty({ itemID: 2, itemName: "继续" }),
-            new MenuItemProperty({ itemID: 3, itemName: "结束" }),
           ],
+          menuObject: new MenuContainerProperty({
+            menuItems: [
+              new MenuItemProperty({ itemID: 1, itemName: "暂停" }),
+              new MenuItemProperty({ itemID: 2, itemName: "继续" }),
+              new MenuItemProperty({ itemID: 3, itemName: "结束" }),
+            ],
+          }),
         }),
-      }),
-    );
-    if (result !== 0) throw new Error("G2 容器创建失败");
+      );
+    } catch (error) {
+      throw new DisplayError("PAGE", exceptionCode(error));
+    }
+    if (result !== 0) {
+      const code =
+        ["success", "invalid", "oversize", "outOfMemory"][result] || "unknown";
+      throw new DisplayError("PAGE", `${code}(${result})`);
+    }
     this.pageCreated = true;
   }
   /** Diagnostic caller must hold navigation idle. No location/provider access. */

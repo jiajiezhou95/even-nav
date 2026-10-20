@@ -151,3 +151,12 @@ User also authorized a bounded G2 XYZ capture. Manual diagnostics use the public
 - Actual user XYZ samples analyzed privately. Repeated nod/tilt patterns were clear, but neither compass semantics nor reliable horizontal head yaw was established. No unsupported head-heading control added.
 - G2 optical legibility, real temple gestures and iPhone lockscreen navigation are not marked PASS by local/CI evidence.
 - Private Beta0.1.8 uploaded/promoted as build116722,80322bytes; download SHA256 matches `2821fb7b74f318746b0ae26de68b2a8ca379f9752ed1aefcaafb97b3668ced70`. Worker deployment `3fa27e2f-9163-4acf-9e2d-38eccb8e3636`. Package build/privacy119files PASS. Actual production compositor screenshot reviewed locally; optical hardware acceptance pending.
+
+### Beta 0.1.9 — display compatibility probe and Start placement
+
+- User reports G2 connected before navigation but failure on start in0.1.8. Confirmed defect: all display exceptions were collapsed into a reconnect message. True native failure stage/root cause was not captured; four images and the original z-order layout are permitted by current official docs, so unsupported four-image claims are unproven.
+- Minimal compatibility adjustment retains B: omit explicit zOrder; reduce blank event capture from full screen to20×20 in the header gap. No encoding, container-count, retry or timing changes. This adjustment requires hardware confirmation and is not claimed as a proven root-cause fix.
+- PAGE startup result, RENDER exception category and IMAGE native result/block are now differentiated; logical connection remains independent. Successful subsequent display clears prior failure state. No private payload is exposed.
+- Single Start button moved directly below the route map and above route1/2/3 tabs. 360px browser screenshot inspected; route3 still starts after selecting it.
+- 16 targeted device tests,2 focused browser tests,TypeScript,build and privacy119files PASS. Real SDK serialization validation PASS. No new Google/Transitous requests; prior map-provider evidence reused.
+- Private Beta build116728,80697bytes,download matches SHA256 `c7dd61feba7bc14b92b0cebde44e93bc7ccea548c66097a236fa4d260c8c2c64`. Exact-head CI on Draft PR. Hardware display repair remains WAITING_FOR_EXTERNAL_GATE.

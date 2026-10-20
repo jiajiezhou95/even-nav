@@ -3,7 +3,12 @@ import { EvenDevice, LatestFrameQueue, nativeFix } from "./device";
 import { project, unproject } from "./map";
 import { staleInstruction } from "./freshness";
 import { getEvenBridge } from "./runtime";
-import type { EvenHubEvent } from "@evenrealities/even_hub_sdk";
+import {
+  CreateStartUpPageContainer,
+  validateEvenHubPageContainer,
+  type EvenHubEvent,
+} from "@evenrealities/even_hub_sdk";
+import { renderHud } from "./hud-renderer";
 
 vi.mock("./runtime", () => ({
   isEvenHost: () => true,
@@ -107,7 +112,6 @@ describe("official SDK boundary and display queue", () => {
           yPosition: 0,
           width: 288,
           height: 144,
-          zOrderIndex: 1,
         },
         {
           containerID: 2,
@@ -115,7 +119,6 @@ describe("official SDK boundary and display queue", () => {
           yPosition: 0,
           width: 288,
           height: 144,
-          zOrderIndex: 2,
         },
         {
           containerID: 3,
@@ -123,7 +126,6 @@ describe("official SDK boundary and display queue", () => {
           yPosition: 144,
           width: 288,
           height: 144,
-          zOrderIndex: 3,
         },
         {
           containerID: 4,
@@ -131,10 +133,18 @@ describe("official SDK boundary and display queue", () => {
           yPosition: 144,
           width: 288,
           height: 144,
-          zOrderIndex: 4,
         },
       ],
-      textObject: [{ containerID: 5, isEventCapture: 1, zOrderIndex: 0 }],
+      textObject: [
+        {
+          containerID: 5,
+          isEventCapture: 1,
+          xPosition: 300,
+          yPosition: 0,
+          width: 20,
+          height: 20,
+        },
+      ],
       menuObject: {
         menuItems: [
           { itemID: 1, itemName: "暂停" },
@@ -143,6 +153,19 @@ describe("official SDK boundary and display queue", () => {
         ],
       },
     });
+    const nativePayload = (
+      bridge.createStartUpPageContainer.mock
+        .calls[0][0] as CreateStartUpPageContainer
+    ).toJson();
+    expect(validateEvenHubPageContainer(nativePayload)).toEqual({
+      valid: true,
+    });
+    for (const item of [
+      ...nativePayload.imageObject,
+      ...nativePayload.textObject,
+    ]) {
+      expect(Object.hasOwn(item, "zOrderIndex")).toBe(false);
+    }
   });
   it("replaces changed cue or blinking status only, without reuploading unchanged quadrants", async () => {
     const bridge = {
@@ -185,7 +208,7 @@ describe("official SDK boundary and display queue", () => {
     const bridge = {
       createStartUpPageContainer: vi.fn(async () => 0),
       updateImageRawData: vi.fn(async (v: { containerID: number }) =>
-        v.containerID === 2 ? "error" : "success",
+        v.containerID === 2 ? "imageSizeInvalid" : "success",
       ),
     };
     const device = new EvenDevice(
@@ -206,6 +229,93 @@ describe("official SDK boundary and display queue", () => {
     expect(bridge.updateImageRawData).toHaveBeenCalledTimes(2);
     expect(device.lastSubmission).toBeUndefined();
     expect(device.queue.inFlight).toBe(false);
+    expect(device.connected).toBe(true);
+    expect(device.lastDisplayFailure).toMatchObject({
+      stage: "IMAGE",
+      code: "imageSizeInvalid",
+      containerID: 2,
+    });
+    expect(failed).toHaveBeenCalledWith(
+      expect.stringContaining("IMAGE:imageSizeInvalid，块 2/4"),
+    );
+  });
+  it.each([
+    [1, "invalid"],
+    [2, "oversize"],
+    [3, "outOfMemory"],
+  ] as const)(
+    "reports native startup rejection %i before rendering or image transmission",
+    async (code, name) => {
+      const health = vi.fn();
+      const bridge = {
+        createStartUpPageContainer: vi.fn(async () => code),
+        updateImageRawData: vi.fn(),
+      };
+      const device = new EvenDevice(
+        () => {},
+        health,
+        () => {},
+      );
+      Object.assign(device, { bridge, connected: true, source: "EVEN" });
+      const renderCalls = vi.mocked(renderHud).mock.calls.length;
+      device.queue.push({
+        sequence: 1,
+        version: 0,
+        pixels: new Uint8Array([1]),
+        instruction: "直行",
+        status: "",
+        attribution: "Synthetic",
+      });
+      await vi.waitFor(() => expect(health).toHaveBeenCalledOnce());
+      expect(vi.mocked(renderHud).mock.calls.length).toBe(renderCalls);
+      expect(bridge.updateImageRawData).not.toHaveBeenCalled();
+      expect(device.lastDisplayFailure).toMatchObject({
+        stage: "PAGE",
+        code: `${name}(${code})`,
+      });
+      expect(device.connected).toBe(true);
+      expect(health).toHaveBeenCalledWith(
+        expect.stringContaining("设备仍已连接"),
+      );
+      expect(device.lastSubmission).toBeUndefined();
+    },
+  );
+  it("separates canvas failures from connectivity and clears the error only after a complete recovery frame", async () => {
+    const health = vi.fn();
+    const bridge = {
+      createStartUpPageContainer: vi.fn(async () => 0),
+      updateImageRawData: vi.fn(async () => "success"),
+    };
+    const device = new EvenDevice(
+      () => {},
+      health,
+      () => {},
+    );
+    Object.assign(device, { bridge, connected: true, source: "EVEN" });
+    vi.mocked(renderHud).mockRejectedValueOnce(
+      new DOMException("private payload must not escape", "InvalidStateError"),
+    );
+    const frame = {
+      sequence: 1,
+      version: 0,
+      pixels: new Uint8Array([1]),
+      instruction: "直行",
+      status: "",
+      attribution: "Synthetic",
+    };
+    device.queue.push(frame);
+    await vi.waitFor(() => expect(health).toHaveBeenCalledOnce());
+    expect(device.lastDisplayFailure).toMatchObject({
+      stage: "RENDER",
+      code: "InvalidStateError",
+    });
+    expect(bridge.updateImageRawData).not.toHaveBeenCalled();
+    expect(JSON.stringify(device.lastDisplayFailure)).not.toContain("private");
+    expect(device.connected).toBe(true);
+    device.queue.push({ ...frame, sequence: 2 });
+    await vi.waitFor(() => expect(device.lastSubmission?.sequence).toBe(2));
+    expect(device.lastDisplayFailure).toBeUndefined();
+    expect(health).toHaveBeenLastCalledWith("G2 已连接，导航画面已发送");
   });
   it("requires successful startup page before exposing IMU controls, without GPS", async () => {
     const bridge = {
@@ -220,7 +330,9 @@ describe("official SDK boundary and display queue", () => {
       () => {},
     );
     Object.assign(device, { bridge, connected: true, source: "EVEN" });
-    await expect(device.prepareImuProbe()).rejects.toThrow("G2 容器创建失败");
+    await expect(device.prepareImuProbe()).rejects.toThrow(
+      "G2 PAGE invalid(1)",
+    );
     expect(bridge.imuControl).not.toHaveBeenCalled();
     bridge.createStartUpPageContainer.mockResolvedValue(0);
     const [one, two] = await Promise.all([
