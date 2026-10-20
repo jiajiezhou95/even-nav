@@ -1570,9 +1570,17 @@ test("SDK scroll gestures zoom the active map without rerouting and ignore non-n
   await pairForImu(page);
   await page.evaluate(() => {
     let listener: ((event: unknown) => void) | undefined;
+    let lastBurstAt = -Infinity;
     (window as any).mockNative = true;
-    (window as any).emitScroll = (eventType: number, count = 1) => {
+    (window as any).emitScroll = async (eventType: number, count = 1) => {
+      // Separate gestures must clear the device's 250 ms deduplication window.
+      // Keep each burst synchronous so duplicate suppression is still tested.
+      while (Date.now() - lastBurstAt < 250)
+        await new Promise((resolve) =>
+          setTimeout(resolve, 250 - (Date.now() - lastBurstAt)),
+        );
       for (let i = 0; i < count; i++) listener?.({ sysEvent: { eventType } });
+      lastBurstAt = Date.now();
     };
     (window as any).mockBridge = {
       getDeviceInfo: async () => ({
