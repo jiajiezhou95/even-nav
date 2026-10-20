@@ -1,0 +1,83 @@
+{
+  "evidence": "LIVE_PROVIDER_DEPLOYED_WORKER",
+  "departureTime": "2026-10-21T09:00:00+09:00",
+  "calls": 1,
+  "plannedCalls": 1,
+  "stoppedEarly": false,
+  "results": [
+    {
+      "name": "Tochomae–Daimon",
+      "at": "2026-10-20T14:39:52.043Z",
+      "http": 200,
+      "status": "ROUTES_RETURNED",
+      "routes": [
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "20220041",
+            "20209811",
+            "都営浅草線 Toei Asakusa Line"
+          ],
+          "agencies": [
+            "東京メトロ",
+            "東京メトロ",
+            "都営地下鉄 Toei Subway"
+          ],
+          "transfers": 2,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 2160
+        },
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "3200601"
+          ],
+          "agencies": [
+            "都営地下鉄"
+          ],
+          "transfers": 0,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 2400
+        },
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "20220051",
+            "都営大江戸線 Toei Ōedo Line"
+          ],
+          "agencies": [
+            "東京メトロ",
+            "都営地下鉄 Toei Subway"
+          ],
+          "transfers": 1,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 2220
+        }
+      ]
+    }
+  ]
+}

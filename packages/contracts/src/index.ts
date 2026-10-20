@@ -59,6 +59,7 @@ export interface RouteLeg {
   endTime?: string;
   line?: string;
   headsign?: string;
+  agency?: string;
   from?: string;
   to?: string;
   platform?: string;

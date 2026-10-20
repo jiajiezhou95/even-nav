@@ -339,6 +339,8 @@ const mleg = z.object({
     .optional(),
   realTime: z.boolean(),
   routeShortName: z.string().optional(),
+  routeLongName: z.string().optional(),
+  agencyName: z.string().optional(),
   displayName: z.string().optional(),
   headsign: z.string().optional(),
   interlineWithPreviousLeg: z.boolean().optional(),
@@ -467,7 +469,12 @@ export async function transitRoutes(
         durationSeconds: l.duration,
         startTime: l.startTime,
         endTime: l.endTime,
-        line: l.displayName ?? l.routeShortName,
+        line:
+          l.routeLongName?.trim() ||
+          l.routeShortName?.trim() ||
+          l.displayName?.trim() ||
+          undefined,
+        agency: l.agencyName?.trim() || undefined,
         headsign: l.headsign,
         from: l.from.name,
         to: l.to.name,

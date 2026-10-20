@@ -300,6 +300,25 @@ describe("providers", () => {
       "/api/v6/plan",
     );
   });
+  it.each([
+    ["Synthetic Line", "SL", "123456", "Synthetic Line"],
+    ["", "SL", "123456", "SL"],
+    [" ", "", "Express", "Express"],
+  ])("keeps line identity separate from trip display name", async (long, short, display, expected) => {
+    const routes = await transitRoutes(
+      { ...trip, mode: "TRANSIT", routeProvider: "TRANSITOUS" },
+      "test",
+      mock({ itineraries: [{ duration: 240, legs: [
+        leg("WALK", 0, 1),
+        { ...leg("SUBWAY", 1, 3), routeLongName: long, routeShortName: short,
+          displayName: display, agencyName: "Synthetic Operator" },
+        leg("WALK", 3, 4),
+      ] }] }),
+    );
+    expect(routes[0].legs.find((l) => l.mode === "RIDE")).toMatchObject({
+      line: expected, agency: "Synthetic Operator",
+    });
+  });
   it("rejects inconsistent leg durations and overlapping rides", async () => {
     for (const legs of [
       [leg("WALK", 0, 1), { ...leg("SUBWAY", 2, 4), duration: 1 }],
