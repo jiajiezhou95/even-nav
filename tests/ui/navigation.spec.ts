@@ -436,7 +436,12 @@ test("real renderer uses encoded PNG, retains only active viewport and preserves
     const renderer = new NavigationMap({
       request: async (path: string) =>
         path.endsWith("session")
-          ? { session: "mock", expiry: String(Date.now() / 1000 + 600) }
+          ? {
+              session: "mock",
+              expiry: String(Date.now() / 1000 + 600),
+              tileWidth: 256,
+              tileHeight: 256,
+            }
           : { copyright: "mock test" },
       fetch: async () => {
         calls++;
@@ -604,7 +609,12 @@ test("horizontal route tabs show selected road map without more tile calls and f
     const url = new URL(route.request().url());
     if (url.pathname.endsWith("/session"))
       return route.fulfill({
-        json: { session: "mock", expiry: String(Date.now() / 1000 + 600) },
+        json: {
+          session: "mock",
+          expiry: String(Date.now() / 1000 + 600),
+          tileWidth: 256,
+          tileHeight: 256,
+        },
       });
     if (url.pathname.endsWith("/viewport")) {
       return route.fulfill({ json: { copyright: "Synthetic map fixture" } });
@@ -765,7 +775,12 @@ test("G2 PNG keeps real tile detail bright on black and distinguishes route and 
     const renderer = new NavigationMap({
       request: async (path: string) =>
         path.endsWith("session")
-          ? { session: "synthetic", expiry: String(Date.now() / 1000 + 600) }
+          ? {
+              session: "synthetic",
+              expiry: String(Date.now() / 1000 + 600),
+              tileWidth: 256,
+              tileHeight: 256,
+            }
           : { copyright: "Synthetic contrast fixture" },
       fetch: async () => new Response(blob),
     });
