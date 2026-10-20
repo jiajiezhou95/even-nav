@@ -373,6 +373,19 @@ select {
   border-radius: 12px;
   padding: 14px;
   margin: 12px 0;
+  background: #fff;
+}
+.route-choice {
+  margin: 18px 0;
+}
+.route-choice > h2 {
+  font-size: 21px;
+}
+.route-choice .map-card {
+  margin: 12px 0 18px;
+}
+.route-card .attribution {
+  margin: 5px 0 0;
 }
 .route-card.selected {
   border-color: #738c56;
@@ -586,6 +599,14 @@ dialog > p {
 .navigating main > .explainer {
   display: none;
 }
+.choosing-route main > .eyebrow,
+.choosing-route main > h1,
+.choosing-route main > .intro,
+.choosing-route main > .import-card,
+.choosing-route main > .fallbacks,
+.choosing-route main > .explainer {
+  display: none;
+}
 .navigating main {
   padding-top: 0;
 }
@@ -595,7 +616,8 @@ dialog > p {
 #workflow {
   scroll-margin-top: 18px;
 }
-#google-attribution {
+#google-attribution,
+.provider-attribution {
   height: 18px;
   width: auto;
   margin: 10px 10px 5px;

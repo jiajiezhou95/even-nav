@@ -32,6 +32,8 @@ export interface NavigationState {
   stepIndex: number;
   progressMeters: number;
   remainingMeters: number;
+  /** Distance to the end of the current step; stale fixes never advance it. */
+  stepRemainingMeters: number;
   location?: LocationFix;
   locationStale: boolean;
   offRoute: boolean;
@@ -59,6 +61,14 @@ export const DEFAULT_NAVIGATION_CONFIG: NavigationConfig = {
   replanCooldownMs: 60000,
   arrivalMeters: 15,
 };
+function firstStepMeters(leg: Route["legs"][number] | undefined): number {
+  const step = leg?.steps[0];
+  return step
+    ? step.geometry.length
+      ? geometryLength(step.geometry)
+      : step.distanceMeters
+    : 0;
+}
 export class NavigationSession {
   private state: NavigationState = {
     phase: "EMPTY",
@@ -68,6 +78,7 @@ export class NavigationSession {
     stepIndex: 0,
     progressMeters: 0,
     remainingMeters: 0,
+    stepRemainingMeters: 0,
     locationStale: true,
     offRoute: false,
     replanNeeded: false,
@@ -101,6 +112,7 @@ export class NavigationSession {
       this.state.routes = [];
       delete this.state.route;
       delete this.state.intent;
+      this.state.stepRemainingMeters = 0;
     }
     return { version: this.state.version, signal: this.controller.signal };
   }
@@ -190,6 +202,7 @@ export class NavigationSession {
       stepIndex: 0,
       progressMeters: 0,
       remainingMeters: route.distanceMeters,
+      stepRemainingMeters: firstStepMeters(route.legs[0]),
       location: structuredClone(fix),
       locationStale: false,
       offRoute: false,
@@ -273,11 +286,16 @@ export class NavigationSession {
     let cumulative = 0;
     this.state.stepIndex = 0;
     for (let i = 0; i < leg.steps.length; i++) {
-      cumulative +=
-        geometryLength(leg.steps[i].geometry) || leg.steps[i].distanceMeters;
+      cumulative += leg.steps[i].geometry.length
+        ? geometryLength(leg.steps[i].geometry)
+        : leg.steps[i].distanceMeters;
       this.state.stepIndex = i;
       if (cumulative > this.state.progressMeters) break;
     }
+    this.state.stepRemainingMeters = Math.max(
+      0,
+      cumulative - this.state.progressMeters,
+    );
     this.state.remainingMeters =
       Math.max(0, geometryLength(leg.geometry) - this.state.progressMeters) +
       this.state
@@ -299,6 +317,9 @@ export class NavigationSession {
     this.state.boarded = false;
     this.state.progressMeters = 0;
     this.state.stepIndex = 0;
+    this.state.stepRemainingMeters = firstStepMeters(
+      this.state.route!.legs[this.state.legIndex],
+    );
     this.farSamples = 0;
     this.state.offRoute = false;
     if (this.state.legIndex >= this.state.route!.legs.length) {
@@ -343,6 +364,7 @@ export class NavigationSession {
     this.controller.abort();
     this.state.version++;
     this.state.phase = "ENDED";
+    this.state.stepRemainingMeters = 0;
     this.state.paused = false;
   }
 }

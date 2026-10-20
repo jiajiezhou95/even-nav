@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
+import { NavigationSession } from "../../core/src/navigation";
+import { geometryLength } from "../../core/src/geometry";
 import {
   decodePolyline,
   googleRoutes,
@@ -335,21 +337,37 @@ describe("providers", () => {
     ["Synthetic Line", "SL", "123456", "Synthetic Line"],
     ["", "SL", "123456", "SL"],
     [" ", "", "Express", "Express"],
-  ])("keeps line identity separate from trip display name", async (long, short, display, expected) => {
-    const routes = await transitRoutes(
-      { ...trip, mode: "TRANSIT", routeProvider: "TRANSITOUS" },
-      "test",
-      mock({ itineraries: [{ duration: 240, legs: [
-        leg("WALK", 0, 1),
-        { ...leg("SUBWAY", 1, 3), routeLongName: long, routeShortName: short,
-          displayName: display, agencyName: "Synthetic Operator" },
-        leg("WALK", 3, 4),
-      ] }] }),
-    );
-    expect(routes[0].legs.find((l) => l.mode === "RIDE")).toMatchObject({
-      line: expected, agency: "Synthetic Operator",
-    });
-  });
+  ])(
+    "keeps line identity separate from trip display name",
+    async (long, short, display, expected) => {
+      const routes = await transitRoutes(
+        { ...trip, mode: "TRANSIT", routeProvider: "TRANSITOUS" },
+        "test",
+        mock({
+          itineraries: [
+            {
+              duration: 240,
+              legs: [
+                leg("WALK", 0, 1),
+                {
+                  ...leg("SUBWAY", 1, 3),
+                  routeLongName: long,
+                  routeShortName: short,
+                  displayName: display,
+                  agencyName: "Synthetic Operator",
+                },
+                leg("WALK", 3, 4),
+              ],
+            },
+          ],
+        }),
+      );
+      expect(routes[0].legs.find((l) => l.mode === "RIDE")).toMatchObject({
+        line: expected,
+        agency: "Synthetic Operator",
+      });
+    },
+  );
   it("rejects inconsistent leg durations and overlapping rides", async () => {
     for (const legs of [
       [leg("WALK", 0, 1), { ...leg("SUBWAY", 2, 4), duration: 1 }],
@@ -386,5 +404,251 @@ describe("providers", () => {
         ),
       ).rejects.toMatchObject({ code: "NO_ROUTE" });
     }
+  });
+});
+
+describe("Google detailed geometry navigation regression", () => {
+  function encoded(points: { lat: number; lng: number }[]) {
+    let lat = 0,
+      lng = 0,
+      out = "";
+    const component = (delta: number) => {
+      let value = delta < 0 ? ~(delta << 1) : delta << 1;
+      let result = "";
+      while (value >= 32) {
+        result += String.fromCharCode((32 | (value & 31)) + 63);
+        value >>= 5;
+      }
+      return result + String.fromCharCode(value + 63);
+    };
+    for (const p of points) {
+      const a = Math.round(p.lat * 1e5),
+        b = Math.round(p.lng * 1e5);
+      out += component(a - lat) + component(b - lng);
+      lat = a;
+      lng = b;
+    }
+    return out;
+  }
+  it("uses detailed steps instead of shorter overview; advances one instruction while preserving pause and stale protection", async () => {
+    const a = { lat: 0, lng: 0 },
+      b = { lat: 0.001, lng: 0 },
+      c = { lat: 0, lng: 0.001 },
+      d = { lat: 0, lng: 0.002 };
+    const first = [a, b, c],
+      second = [c, d];
+    const response = {
+      routes: [
+        {
+          distanceMeters: 380,
+          duration: "240s",
+          legs: [
+            {
+              distanceMeters: 380,
+              duration: "240s",
+              polyline: { encodedPolyline: encoded([a, c, d]) },
+              steps: [
+                {
+                  distanceMeters: 269,
+                  staticDuration: "180s",
+                  polyline: { encodedPolyline: encoded(first) },
+                  navigationInstruction: { instructions: "first" },
+                },
+                {
+                  distanceMeters: 111,
+                  staticDuration: "60s",
+                  polyline: { encodedPolyline: encoded(second) },
+                  navigationInstruction: { instructions: "second" },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const [route] = await googleRoutes(trip, "test-only", mock(response));
+    expect(route.legs[0].geometry).toEqual([a, b, c, d]);
+    expect(route.legs[0].steps.map((s) => s.geometry)).toEqual([first, second]);
+    expect(route.distanceMeters).toBe(380);
+    expect(route.durationSeconds).toBe(240);
+    expect(geometryLength(route.legs[0].geometry)).toBeCloseTo(
+      geometryLength(first) + geometryLength(second),
+      5,
+    );
+    const now = Date.now(),
+      session = new NavigationSession();
+    const r = session.beginRequest("PLANNING");
+    session.acceptRoutes(r.version, [route], a);
+    session.start(route.id, { coordinate: a, timestamp: now }, now);
+    expect(
+      session.updateLocation(
+        { coordinate: b, timestamp: now + 40000 },
+        now + 40000,
+      ),
+    ).toBe(true);
+    expect(session.snapshot.stepIndex).toBe(0);
+    expect(
+      session.updateLocation(
+        { coordinate: c, timestamp: now + 80000 },
+        now + 80000,
+      ),
+    ).toBe(true);
+    expect(
+      session.updateLocation(
+        { coordinate: { lat: 0, lng: 0.0012 }, timestamp: now + 100000 },
+        now + 100000,
+      ),
+    ).toBe(true);
+    expect(session.snapshot.stepIndex).toBe(1);
+    expect(session.snapshot.stepRemainingMeters).toBeCloseTo(
+      geometryLength([{ lat: 0, lng: 0.0012 }, d]),
+      3,
+    );
+    const progress = session.snapshot.progressMeters;
+    expect(
+      session.updateLocation(
+        { coordinate: d, timestamp: now + 101000 },
+        now + 120000,
+      ),
+    ).toBe(false);
+    expect(session.snapshot.progressMeters).toBe(progress);
+    expect(session.snapshot.locationStale).toBe(true);
+    session.pause();
+    expect(
+      session.updateLocation(
+        { coordinate: d, timestamp: now + 121000 },
+        now + 121000,
+      ),
+    ).toBe(false);
+    expect(session.snapshot.stepIndex).toBe(1);
+  });
+  it("preserves singleton control-step metadata without shifting later geometric boundaries", async () => {
+    const a = { lat: 0, lng: 0 },
+      b = { lat: 0, lng: 0.001 },
+      c = { lat: 0, lng: 0.002 };
+    const response = {
+      routes: [
+        {
+          distanceMeters: 232,
+          duration: "200s",
+          legs: [
+            {
+              distanceMeters: 232,
+              duration: "200s",
+              steps: [
+                {
+                  distanceMeters: 111,
+                  staticDuration: "80s",
+                  polyline: { encodedPolyline: encoded([a, b]) },
+                  navigationInstruction: { instructions: "first" },
+                },
+                {
+                  distanceMeters: 10,
+                  staticDuration: "10s",
+                  polyline: { encodedPolyline: encoded([b]) },
+                  navigationInstruction: { instructions: "control" },
+                },
+                {
+                  distanceMeters: 0,
+                  staticDuration: "0s",
+                  polyline: { encodedPolyline: "" },
+                },
+                {
+                  distanceMeters: 111,
+                  staticDuration: "110s",
+                  polyline: { encodedPolyline: encoded([b, c]) },
+                  navigationInstruction: { instructions: "next" },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const [route] = await googleRoutes(trip, "test", mock(response));
+    expect(route.legs[0].steps[1].distanceMeters).toBe(10);
+    expect(route.legs[0].geometry).toEqual([a, b, c]);
+    const now = Date.now(),
+      session = new NavigationSession();
+    const req = session.beginRequest("PLANNING");
+    session.acceptRoutes(req.version, [route], a);
+    session.start(route.id, { coordinate: a, timestamp: now }, now);
+    session.updateLocation(
+      { coordinate: { lat: 0, lng: 0.00101 }, timestamp: now + 60000 },
+      now + 60000,
+    );
+    expect(session.snapshot.stepIndex).toBe(3);
+    expect(session.snapshot.stepRemainingMeters).toBeCloseTo(
+      geometryLength([{ lat: 0, lng: 0.00101 }, c]),
+      3,
+    );
+  });
+  it("rejects disconnected detailed steps instead of inventing unmeasured connectors", async () => {
+    const response = {
+      routes: [
+        {
+          distanceMeters: 200,
+          duration: "200s",
+          legs: [
+            {
+              distanceMeters: 200,
+              duration: "200s",
+              steps: [
+                {
+                  distanceMeters: 100,
+                  staticDuration: "100s",
+                  polyline: {
+                    encodedPolyline: encoded([
+                      { lat: 0, lng: 0 },
+                      { lat: 0, lng: 0.001 },
+                    ]),
+                  },
+                },
+                {
+                  distanceMeters: 100,
+                  staticDuration: "100s",
+                  polyline: {
+                    encodedPolyline: encoded([
+                      { lat: 1, lng: 1 },
+                      { lat: 1, lng: 1.001 },
+                    ]),
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    await expect(
+      googleRoutes(trip, "test", mock(response)),
+    ).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+  });
+  it("rejects missing step geometry rather than replacing it with an overview", async () => {
+    const response = {
+      routes: [
+        {
+          distanceMeters: 100,
+          duration: "60s",
+          legs: [
+            {
+              distanceMeters: 100,
+              duration: "60s",
+              polyline: { encodedPolyline: geometry },
+              steps: [
+                {
+                  distanceMeters: 100,
+                  staticDuration: "60s",
+                  polyline: { encodedPolyline: "" },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    await expect(
+      googleRoutes(trip, "test", mock(response)),
+    ).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
   });
 });

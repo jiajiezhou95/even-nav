@@ -313,13 +313,39 @@ export async function googleRoutes(
         distanceMeters: s.distanceMeters,
         durationSeconds: s.staticDuration,
       }));
+      // Navigation progress and step boundaries must use the same detailed geometry.
+      // A simplified leg polyline can have a different length and delay turns.
+      const geometry: Coordinate[] = [];
+      for (const step of steps) {
+        if (!step.geometry.length && step.distanceMeters > 0)
+          throw new NavError("PROVIDER_UNAVAILABLE", "路线步骤缺少有效几何");
+        const previousEnd = geometry.at(-1),
+          nextStart = step.geometry[0];
+        if (
+          previousEnd &&
+          nextStart &&
+          (previousEnd.lat !== nextStart.lat ||
+            previousEnd.lng !== nextStart.lng)
+        )
+          throw new NavError("PROVIDER_UNAVAILABLE", "路线步骤几何不连续");
+        for (const point of step.geometry) {
+          const previous = geometry.at(-1);
+          if (
+            !previous ||
+            previous.lat !== point.lat ||
+            previous.lng !== point.lng
+          )
+            geometry.push(point);
+        }
+      }
+      if (geometry.length < 2 && l.distanceMeters > 0)
+        throw new NavError("PROVIDER_UNAVAILABLE", "路线缺少可导航几何");
       return {
         mode: t.mode as "WALK" | "DRIVE",
         distanceMeters: l.distanceMeters,
         durationSeconds: l.duration,
-        geometry: l.polyline
-          ? decodePolyline(l.polyline.encodedPolyline)
-          : steps.flatMap((s) => s.geometry),
+        geometry,
+
         steps,
       };
     }),
@@ -628,22 +654,20 @@ export async function enrichDestination(
       throw new NavError("PROVIDER_UNAVAILABLE", "地点搜索响应无效");
     if (!p.data.places.length)
       throw new NavError("DESTINATION_MISSING", "未找到目的地");
-    return p.data.places
-      .slice(0, 5)
-      .map((x) => ({
-        label: x.displayName?.text ?? c.label,
-        address: x.formattedAddress,
-        placeId: x.id,
-        coordinate: coordinate.parse({
-          lat: x.location.latitude,
-          lng: x.location.longitude,
-        }),
-        source: "GOOGLE_API_CONTENT",
-        evidence: "DOCUMENTED_FIELD",
-        coordinateRole: "ENDPOINT",
-        extractedFrom: "places-text-search-v1",
-        usagePolicyId: "google-places",
-      }));
+    return p.data.places.slice(0, 5).map((x) => ({
+      label: x.displayName?.text ?? c.label,
+      address: x.formattedAddress,
+      placeId: x.id,
+      coordinate: coordinate.parse({
+        lat: x.location.latitude,
+        lng: x.location.longitude,
+      }),
+      source: "GOOGLE_API_CONTENT",
+      evidence: "DOCUMENTED_FIELD",
+      coordinateRole: "ENDPOINT",
+      extractedFrom: "places-text-search-v1",
+      usagePolicyId: "google-places",
+    }));
   }
   const query = c.address ?? c.label;
   if (!query) throw new NavError("DESTINATION_MISSING", "缺少目的地");
@@ -671,17 +695,15 @@ export async function enrichDestination(
     throw new NavError("PROVIDER_UNAVAILABLE", "地点补全失败");
   if (!p.data.results.length)
     throw new NavError("DESTINATION_MISSING", "未找到目的地");
-  return p.data.results
-    .slice(0, 5)
-    .map((x) => ({
-      label: c.label,
-      address: x.formatted_address,
-      placeId: x.place_id,
-      coordinate: x.geometry.location,
-      source: "GOOGLE_API_CONTENT",
-      evidence: x.partial_match ? "INFERRED" : "DOCUMENTED_FIELD",
-      coordinateRole: "ENDPOINT",
-      extractedFrom: "geocoding-v3",
-      usagePolicyId: "google-geocoding",
-    }));
+  return p.data.results.slice(0, 5).map((x) => ({
+    label: c.label,
+    address: x.formatted_address,
+    placeId: x.place_id,
+    coordinate: x.geometry.location,
+    source: "GOOGLE_API_CONTENT",
+    evidence: x.partial_match ? "INFERRED" : "DOCUMENTED_FIELD",
+    coordinateRole: "ENDPOINT",
+    extractedFrom: "geocoding-v3",
+    usagePolicyId: "google-geocoding",
+  }));
 }

@@ -46,6 +46,8 @@ export class NavigationMap {
   private center?: Coordinate;
   private zoom = 16;
   private viewport?: { key: string; copyright: string };
+  private routePaths: { id: string; points: { x: number; y: number }[] }[] = [];
+  private hudOverlay?: (ctx: CanvasRenderingContext2D) => void;
   attribution = "";
   ready = false;
   constructor(private client: WorkerClient) {
@@ -63,6 +65,8 @@ export class NavigationMap {
     this.center = undefined;
     this.viewport = undefined;
     this.displayedBase = undefined;
+    this.routePaths = [];
+    this.hudOverlay = undefined;
     this.context.fillStyle = "#e5e9e3";
     this.context.fillRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
   }
@@ -84,32 +88,104 @@ export class NavigationMap {
       this.zoom,
     );
   }
+  routeFromClick(event: MouseEvent): string | undefined {
+    if (!this.ready) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const x = ((event.clientX - rect.left) / rect.width) * MAP_WIDTH;
+    const y = ((event.clientY - rect.top) / rect.height) * MAP_HEIGHT;
+    let nearest = 12,
+      selected: string | undefined;
+    for (const route of this.routePaths)
+      for (let i = 1; i < route.points.length; i++) {
+        const a = route.points[i - 1],
+          b = route.points[i];
+        const dx = b.x - a.x,
+          dy = b.y - a.y;
+        const t = Math.max(
+          0,
+          Math.min(
+            1,
+            ((x - a.x) * dx + (y - a.y) * dy) / (dx * dx + dy * dy || 1),
+          ),
+        );
+        const d = Math.hypot(x - a.x - t * dx, y - a.y - t * dy);
+        if (d < nearest) {
+          nearest = d;
+          selected = route.id;
+        }
+      }
+    return selected;
+  }
   async draw(
     center: Coordinate,
     destination?: EndpointCandidate,
     route?: Route,
     position?: Coordinate,
+    alternatives: Route[] = [],
   ): Promise<void> {
     this.controller?.abort();
     const controller = (this.controller = new AbortController());
     const generation = ++this.generation;
     this.ready = false;
-    if (route?.basemapProvider === "OPEN_MAP")
+    if (
+      route?.basemapProvider === "OPEN_MAP" ||
+      alternatives.some((item) => item.basemapProvider === "OPEN_MAP")
+    )
       throw new NavError(
         "CONFIG_MISSING",
         "开放底图尚未配置，不能用 Google 图层替换此路线。",
       );
+    const previousZoom = this.zoom;
     this.zoom = route?.legs.some((leg) => leg.mode === "DRIVE") ? 15 : 16;
+    const overview = alternatives.slice(0, 3);
+    if (overview.length) {
+      const points = overview.flatMap((item) =>
+        item.legs.flatMap((leg) => leg.geometry),
+      );
+      if (points.length) {
+        const bounds = points.reduce(
+          (bounds, point) => {
+            const p = project(point, 0);
+            return {
+              left: Math.min(bounds.left, p.x),
+              right: Math.max(bounds.right, p.x),
+              top: Math.min(bounds.top, p.y),
+              bottom: Math.max(bounds.bottom, p.y),
+            };
+          },
+          {
+            left: Infinity,
+            right: -Infinity,
+            top: Infinity,
+            bottom: -Infinity,
+          },
+        );
+        for (this.zoom = 18; this.zoom > 2; this.zoom--) {
+          const width = (bounds.right - bounds.left) * 2 ** this.zoom;
+          const height = (bounds.bottom - bounds.top) * 2 ** this.zoom;
+          if (width <= MAP_WIDTH - 40 && height <= MAP_HEIGHT - 40) break;
+        }
+        this.center = unproject(
+          (bounds.left + bounds.right) / 2,
+          (bounds.top + bounds.bottom) / 2,
+          0,
+        );
+      }
+    }
+    const zoom = this.zoom;
+    if (!this.center) this.center = center;
     // Stable view until the position reaches the middle half of the map.
-    const previous = this.center && project(this.center, this.zoom);
-    const next = project(center, this.zoom);
+    const previous = this.center && project(this.center, zoom);
+    const next = project(center, zoom);
     if (
-      !previous ||
-      Math.abs(previous.x - next.x) > MAP_WIDTH / 4 ||
-      Math.abs(previous.y - next.y) > MAP_HEIGHT / 4
+      !overview.length &&
+      (!previous ||
+        previousZoom !== zoom ||
+        Math.abs(previous.x - next.x) > MAP_WIDTH / 4 ||
+        Math.abs(previous.y - next.y) > MAP_HEIGHT / 4)
     )
       this.center = center;
-    const c = project(this.center!, this.zoom);
+    const c = project(this.center!, zoom);
     const west = c.x - MAP_WIDTH / 2,
       north = c.y - MAP_HEIGHT / 2;
     if (!this.session)
@@ -131,16 +207,16 @@ export class NavigationMap {
         true,
       );
     }
-    const boundsA = unproject(west, north, this.zoom),
-      boundsB = unproject(west + MAP_WIDTH, north + MAP_HEIGHT, this.zoom);
-    const viewportKey = `${session.session}/${this.zoom}/${west}/${north}`;
+    const boundsA = unproject(west, north, zoom),
+      boundsB = unproject(west + MAP_WIDTH, north + MAP_HEIGHT, zoom);
+    const viewportKey = `${session.session}/${zoom}/${west}/${north}`;
     const viewport =
       this.viewport?.key === viewportKey
         ? this.viewport
         : await this.client.request<{ copyright: string }>(
             `/v1/maps/google/viewport?${new URLSearchParams({
               session: session.session,
-              zoom: String(this.zoom),
+              zoom: String(zoom),
               north: String(boundsA.lat),
               south: String(boundsB.lat),
               west: String(boundsA.lng),
@@ -164,7 +240,7 @@ export class NavigationMap {
       ctx.drawImage(this.displayedBase.canvas, 0, 0);
     } else {
       this.displayedBase = undefined;
-      const worldTiles = 2 ** this.zoom;
+      const worldTiles = 2 ** zoom;
       for (
         let y = Math.floor(north / 256);
         y <= Math.floor((north + MAP_HEIGHT) / 256);
@@ -178,7 +254,7 @@ export class NavigationMap {
           if (y < 0 || y >= worldTiles) continue;
           const tileX = (x + worldTiles) % worldTiles;
           const response = await this.client.fetch(
-            `/v1/maps/google/tiles/${this.zoom}/${tileX}/${y}?session=${encodeURIComponent(session.session)}`,
+            `/v1/maps/google/tiles/${zoom}/${tileX}/${y}?session=${encodeURIComponent(session.session)}`,
             undefined,
             controller.signal,
           );
@@ -205,25 +281,58 @@ export class NavigationMap {
     const path = (coordinates: Coordinate[]) => {
       ctx.beginPath();
       coordinates.forEach((point, i) => {
-        const p = project(point, this.zoom);
+        const p = project(point, zoom);
         if (i === 0) ctx.moveTo(p.x - west, p.y - north);
         else ctx.lineTo(p.x - west, p.y - north);
       });
       ctx.stroke();
     };
-    if (route)
-      for (const leg of route.legs) {
+    const visibleRoutes = overview.length ? overview : route ? [route] : [];
+    this.routePaths = [];
+    const drawingOrder = [
+      ...visibleRoutes.filter((item) => item.id !== route?.id),
+      ...visibleRoutes.filter((item) => item.id === route?.id),
+    ];
+    for (const item of drawingOrder)
+      for (const leg of item.legs) {
+        this.routePaths.push({
+          id: item.id,
+          points: leg.geometry.map((point) => {
+            const p = project(point, zoom);
+            return { x: p.x - west, y: p.y - north };
+          }),
+        });
         ctx.strokeStyle = "#fff";
-        ctx.lineWidth = 7;
+        ctx.lineWidth = item.id === route?.id ? 7 : 5;
         path(leg.geometry);
-        ctx.strokeStyle = "#111";
-        ctx.lineWidth = 3;
+        ctx.strokeStyle = item.id === route?.id ? "#163e30" : "#929f97";
+        ctx.lineWidth = item.id === route?.id ? 3 : 2;
         ctx.setLineDash(leg.mode === "WALK" ? [5, 3] : []);
         path(leg.geometry);
         ctx.setLineDash([]);
       }
+    if (overview.length)
+      overview.forEach((item, i) => {
+        const points = item.legs.flatMap((leg) => leg.geometry);
+        if (!points.length) return;
+        const a = project(
+          points[Math.max(0, Math.floor(points.length / 2) - 1)],
+          zoom,
+        );
+        const b = project(points[Math.floor(points.length / 2)], zoom);
+        const p = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+        ctx.fillStyle = item.id === route?.id ? "#163e30" : "#66766e";
+        ctx.beginPath();
+        ctx.arc(p.x - west, p.y - north, 8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#fff";
+        ctx.font = "bold 10px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(String(i + 1), p.x - west, p.y - north);
+      });
     const marker = (point: Coordinate, radius: number, fill: string) => {
-      const p = project(point, this.zoom);
+      const p = project(point, zoom);
       ctx.beginPath();
       ctx.arc(p.x - west, p.y - north, radius, 0, Math.PI * 2);
       ctx.fillStyle = fill;
@@ -234,14 +343,74 @@ export class NavigationMap {
     };
     if (destination?.coordinate) marker(destination.coordinate, 5, "#fff");
     if (position) marker(position, 6, "#000");
+    this.hudOverlay = (hud) => {
+      hud.lineJoin = "round";
+      hud.lineCap = "round";
+      for (const leg of route?.legs || []) {
+        const stroke = (color: string, width: number) => {
+          hud.strokeStyle = color;
+          hud.lineWidth = width;
+          hud.beginPath();
+          leg.geometry.forEach((point, i) => {
+            const p = project(point, zoom);
+            if (i === 0) hud.moveTo(p.x - west, p.y - north);
+            else hud.lineTo(p.x - west, p.y - north);
+          });
+          hud.stroke();
+        };
+        stroke("#000", 7);
+        stroke("#fff", 3);
+      }
+      for (const [point, current] of [
+        [destination?.coordinate, false],
+        [position, true],
+      ] as const) {
+        if (!point) continue;
+        const p = project(point, zoom);
+        hud.beginPath();
+        hud.arc(p.x - west, p.y - north, current ? 6 : 5, 0, Math.PI * 2);
+        hud.fillStyle = current ? "#fff" : "#000";
+        hud.fill();
+        hud.strokeStyle = current ? "#000" : "#fff";
+        hud.lineWidth = 2;
+        hud.stroke();
+      }
+    };
     this.context.drawImage(offscreen, 0, 0);
-    this.attribution = `底图 Google Maps · ${viewport.copyright}${route?.attribution.length ? `\n路线 ${[...new Set(route.attribution)].join(" · ")}` : ""}`;
+    const routeAttribution = [
+      ...new Set(visibleRoutes.flatMap((item) => item.attribution)),
+    ];
+    this.attribution = `Google Maps · ${viewport.copyright}${routeAttribution.length ? `\n${routeAttribution.join(" · ")}` : ""}`;
+    this.canvas.setAttribute(
+      "aria-label",
+      overview.length
+        ? `路线比较地图，${overview.length} 条路线，已选择路线 ${overview.findIndex((item) => item.id === route?.id) + 1}`
+        : "道路地图、路线与位置",
+    );
     this.ready = true;
   }
   async pixels(): Promise<Uint8Array> {
+    const hud = document.createElement("canvas");
+    hud.width = MAP_WIDTH;
+    hud.height = MAP_HEIGHT;
+    const ctx = hud.getContext("2d")!;
+    ctx.drawImage(this.displayedBase?.canvas || this.canvas, 0, 0);
+    const image = ctx.getImageData(0, 0, MAP_WIDTH, MAP_HEIGHT);
+    // Transform the actual tile pixels only; no synthetic road or edge geometry.
+    // G2's physical green display renders white pixels bright and black pixels dark.
+    for (let i = 0; i < image.data.length; i += 4) {
+      const luminance =
+        image.data[i] * 0.2126 +
+        image.data[i + 1] * 0.7152 +
+        image.data[i + 2] * 0.0722;
+      const value = Math.max(0, Math.min(210, (245 - luminance) * 2.5));
+      image.data[i] = image.data[i + 1] = image.data[i + 2] = value;
+    }
+    ctx.putImageData(image, 0, 0);
+    this.hudOverlay?.(ctx);
     // Official image template specifies encoded bytes; native host converts PNG to 4-bit.
     const blob = await new Promise<Blob>((resolve, reject) =>
-      this.canvas.toBlob(
+      hud.toBlob(
         (result) =>
           result ? resolve(result) : reject(new Error("PNG encoding failed")),
         "image/png",

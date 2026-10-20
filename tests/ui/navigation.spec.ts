@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { writeFile, mkdir } from "node:fs/promises";
 
 const link =
   "https://www.google.com/maps/dir/?api=1&origin=34.0,135.0&destination=35.6822,139.7691&travelmode=walking";
@@ -32,6 +33,19 @@ test.beforeEach(async ({ page, context }) => {
       return route.fulfill({ json: { revoked: true } });
     if (path === "/v1/providers")
       return route.fulfill({ json: { google: { configured: true } } });
+    if (path === "/v1/destinations/resolve")
+      return route.fulfill({
+        json: {
+          candidates: [
+            {
+              ...route.request().postDataJSON().candidate,
+              coordinate: { lat: 35.6822, lng: 139.7691 },
+              source: "GOOGLE_API_CONTENT",
+              evidence: "DOCUMENTED_FIELD",
+            },
+          ],
+        },
+      });
     if (path.includes("/maps/"))
       return route.fulfill({
         status: 503,
@@ -93,11 +107,7 @@ test("paste-first native input works without clipboard and coordinates require n
   });
   await page.getByLabel("GOOGLE MAPS 分享链接").fill(link);
   await page.getByRole("button", { name: /导入链接/ }).click();
-  await expect(
-    page.getByText(
-      "已导入目的地。本插件会重新计算路线，可能与 Google Maps 中选择的路线不同。",
-    ),
-  ).toBeVisible();
+  await expect(page.locator(".confirmation")).toBeVisible();
   await expect(page.getByLabel("起点")).toHaveValue("current");
   await expect(page.getByText("35.682200, 139.769100")).toBeVisible();
   expect(apiCalls).toEqual([]);
@@ -137,11 +147,13 @@ test("actual returned route is explicitly selected and uses current GPS, with pa
     page.getByText("合成测试路线，仅用于 UI MOCK_HTTP"),
   ).toBeVisible();
   await page.getByRole("button", { name: "开始导航 ↗" }).click();
-  await expect(page.getByRole("heading", { name: "沿道路前行" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /沿道路前行 · 本段剩余 \d+ m/ }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "暂停", exact: true }).click();
   await expect(page.getByRole("heading", { name: "导航已暂停" })).toBeVisible();
   await page.getByRole("button", { name: "继续", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "沿道路前行" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /沿道路前行/ })).toBeVisible();
   expect(
     await page.evaluate(() => ({
       local: localStorage.length,
@@ -249,19 +261,17 @@ test("real renderer uses encoded PNG, retains only active viewport and preserves
   });
   await configure(page);
   await page.getByRole("button", { name: /地图选点/ }).click();
-  await expect(page.getByText("北向上 · 真实瓦片")).toBeVisible();
+  await expect(page.getByText("北向上", { exact: true })).toBeVisible();
   await expect(
     page.getByRole("img", { name: "Google Maps", exact: true }),
   ).toBeVisible();
   await page.locator("canvas").click({ position: { x: 120, y: 65 } });
-  await expect(
-    page.getByText(
-      "此落点来自 Google 底图，仍沿用 Google 数据来源与地图使用限制。",
-    ),
-  ).toBeVisible();
-  await expect(
-    page.getByText("来源：Google 地点服务 · 用户输入"),
-  ).toBeVisible();
+  await expect(page.locator(".confirmation")).toBeVisible();
+  const planned = page.waitForRequest("https://worker.test/v1/routes/road");
+  await page.getByRole("button", { name: "确认目的地，查询路线" }).click();
+  expect((await planned).postDataJSON().destination.source).toBe(
+    "GOOGLE_API_CONTENT",
+  );
   expect(tileRequests).toBeGreaterThan(0);
   const result = await page.evaluate(async () => {
     const modulePath = "/src/map.ts";
@@ -303,6 +313,316 @@ test("real renderer uses encoded PNG, retains only active viewport and preserves
 });
 
 const credentialKey = "even-nav.device-credential.v1";
+test("address enrichment precedes confirmation and one confirmed click plans the enriched destination", async ({
+  page,
+}) => {
+  await configure(page);
+  let lookups = 0,
+    plans = 0;
+  page.on("request", (request) => {
+    if (request.url().endsWith("/destinations/resolve")) lookups++;
+    if (request.url().endsWith("/routes/road")) plans++;
+  });
+  await page.route("https://worker.test/v1/destinations/resolve", (route) =>
+    route.fulfill({
+      json: {
+        candidates: [
+          {
+            ...route.request().postDataJSON().candidate,
+            label: "合成测试公园",
+            address: "合成测试区一丁目",
+            coordinate: { lat: 35.6822, lng: 139.7691 },
+            evidence: "DOCUMENTED_FIELD",
+            source: "GOOGLE_API_CONTENT",
+          },
+        ],
+      },
+    }),
+  );
+  await page
+    .getByLabel("GOOGLE MAPS 分享链接")
+    .fill("https://www.google.com/maps/search/?api=1&query=SyntheticPark");
+  await page.getByRole("button", { name: /导入链接/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "合成测试公园" }),
+  ).toBeVisible();
+  expect(lookups).toBe(1);
+  expect(plans).toBe(0);
+  const planned = page.waitForRequest("https://worker.test/v1/routes/road");
+  await page.getByRole("button", { name: "确认目的地，查询路线" }).click();
+  expect((await planned).postDataJSON().destination).toMatchObject({
+    label: "合成测试公园",
+    coordinate: { lat: 35.6822, lng: 139.7691 },
+  });
+  await expect(page.locator(".route-card")).toHaveCount(1);
+  expect(lookups).toBe(1);
+  expect(plans).toBe(1);
+  await expect(page.locator(".confirmation")).toHaveCount(0);
+});
+test("ambiguous enriched destinations require an explicit candidate choice", async ({
+  page,
+}) => {
+  await configure(page);
+  await page.route("https://worker.test/v1/destinations/resolve", (route) =>
+    route.fulfill({
+      json: {
+        candidates: [0, 1].map((i) => ({
+          ...route.request().postDataJSON().candidate,
+          label: `合成候选${i + 1}`,
+          address: `合成地址${i + 1}`,
+          coordinate: { lat: 35.6822 + i * 0.001, lng: 139.7691 },
+          evidence: "DOCUMENTED_FIELD",
+          source: "GOOGLE_API_CONTENT",
+        })),
+      },
+    }),
+  );
+  await page
+    .getByLabel("GOOGLE MAPS 分享链接")
+    .fill("https://www.google.com/maps/search/?api=1&query=SyntheticAmbiguous");
+  await page.getByRole("button", { name: /导入链接/ }).click();
+  await expect(page.getByLabel("存在多个候选，请选择")).toHaveValue("");
+  await expect(
+    page.getByRole("button", { name: "确认目的地，查询路线" }),
+  ).toBeDisabled();
+  await page.getByLabel("存在多个候选，请选择").selectOption("1");
+  await expect(page.getByRole("heading", { name: "合成候选2" })).toBeVisible();
+  const planned = page.waitForRequest("https://worker.test/v1/routes/road");
+  await page.getByRole("button", { name: "确认目的地，查询路线" }).click();
+  expect((await planned).postDataJSON().destination.label).toBe("合成候选2");
+});
+test("cancelled enrichment cannot replace a newer destination", async ({
+  page,
+}) => {
+  await configure(page);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(
+    "https://worker.test/v1/destinations/resolve",
+    async (route) => {
+      await held;
+      await route
+        .fulfill({
+          json: {
+            candidates: [
+              {
+                ...route.request().postDataJSON().candidate,
+                label: "已取消的合成地点",
+                coordinate: { lat: 30, lng: 130 },
+              },
+            ],
+          },
+        })
+        .catch(() => {});
+    },
+  );
+  await page
+    .getByLabel("GOOGLE MAPS 分享链接")
+    .fill(
+      "https://www.google.com/maps/search/?api=1&query=SyntheticDelayedAddress",
+    );
+  await page.getByRole("button", { name: /导入链接/ }).click();
+  await expect(
+    page.getByRole("button", { name: "确认目的地，查询路线" }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "取消", exact: true }).click();
+  await page.getByLabel("GOOGLE MAPS 分享链接").fill("35.9, 139.9");
+  await page.getByRole("button", { name: /导入链接/ }).click();
+  release();
+  await expect(page.getByText("35.900000, 139.900000")).toBeVisible();
+  await expect(page.getByText("已取消的合成地点")).toHaveCount(0);
+});
+test("route overview draws returned alternatives above concise selectable cards", async ({
+  page,
+}, testInfo) => {
+  await configure(page);
+  const tile = await page.evaluate(() => {
+    const c = document.createElement("canvas");
+    c.width = c.height = 256;
+    const ctx = c.getContext("2d")!;
+    ctx.fillStyle = "#fafafa";
+    ctx.fillRect(0, 0, 256, 256);
+    ctx.fillStyle = "#aaa";
+    ctx.fillRect(0, 120, 256, 6);
+    return c.toDataURL("image/png").split(",")[1];
+  });
+  let viewport: URL | undefined;
+  await page.route("https://worker.test/v1/maps/**", (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/session"))
+      return route.fulfill({
+        json: { session: "mock", expiry: String(Date.now() / 1000 + 600) },
+      });
+    if (url.pathname.endsWith("/viewport")) {
+      viewport = url;
+      return route.fulfill({ json: { copyright: "Synthetic map fixture" } });
+    }
+    return route.fulfill({
+      contentType: "image/png",
+      body: Buffer.from(tile, "base64"),
+      headers: { "Cache-Control": "no-store" },
+    });
+  });
+  await page.route("https://worker.test/v1/routes/road", (route) => {
+    const request = route.request().postDataJSON();
+    return route.fulfill({
+      json: {
+        requestVersion: request.requestVersion,
+        routes: [0, 1, 2].map((i) => ({
+          id: `comparison-${i}`,
+          provider: "GOOGLE_ROUTES",
+          basemapProvider: "GOOGLE_TILES",
+          fetchedAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 600000).toISOString(),
+          durationSeconds: 180 + i * 60,
+          distanceMeters: 400,
+          warnings: [],
+          attribution: ["Synthetic route attribution"],
+          legs: [
+            {
+              mode: "WALK",
+              durationSeconds: 180 + i * 60,
+              distanceMeters: 400,
+              geometry: [
+                request.origin,
+                { lat: 35.6812 + i * 0.0015, lng: 139.77 },
+                request.destination.coordinate,
+              ],
+              steps: [],
+            },
+          ],
+        })),
+      },
+    });
+  });
+  await page.getByLabel("GOOGLE MAPS 分享链接").fill(link);
+  await page.getByRole("button", { name: /导入链接/ }).click();
+  await page.getByRole("button", { name: "确认目的地，查询路线" }).click();
+  const canvas = page.locator("canvas");
+  await expect(canvas).toHaveAttribute(
+    "aria-label",
+    "路线比较地图，3 条路线，已选择路线 1",
+  );
+  await expect(page.locator(".route-card")).toHaveCount(3);
+  const mapBox = await canvas.boundingBox(),
+    cardBox = await page.locator(".route-card").first().boundingBox();
+  expect(mapBox!.y + mapBox!.height).toBeLessThan(cardBox!.y);
+  expect(await page.locator(".route-card details[open]").count()).toBe(0);
+  const first = await canvas.evaluate((el: HTMLCanvasElement) =>
+    el.toDataURL(),
+  );
+  await page
+    .getByRole("button", { name: "路线 2，4 分钟", exact: true })
+    .click();
+  await expect(canvas).toHaveAttribute(
+    "aria-label",
+    "路线比较地图，3 条路线，已选择路线 2",
+  );
+  expect(
+    await canvas.evaluate((el: HTMLCanvasElement) => el.toDataURL()),
+  ).not.toBe(first);
+  const click = await page.evaluate(async (query) => {
+    const path = "/src/map.ts";
+    const { project } = await import(path);
+    const zoom = Number(query.zoom),
+      p = project({ lat: 35.6842, lng: 139.77 }, zoom);
+    const corner = project(
+      { lat: Number(query.north), lng: Number(query.west) },
+      zoom,
+    );
+    const rect = document.querySelector("canvas")!.getBoundingClientRect();
+    return {
+      x: ((p.x - corner.x) * rect.width) / 288,
+      y: ((p.y - corner.y) * rect.height) / 144,
+    };
+  }, Object.fromEntries(viewport!.searchParams));
+  await canvas.click({ position: click });
+  await expect(
+    page.getByRole("button", { name: "路线 3，5 分钟", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(canvas).toHaveAttribute(
+    "aria-label",
+    "路线比较地图，3 条路线，已选择路线 3",
+  );
+  await expect(page.locator("#attribution")).toContainText(
+    "Synthetic map fixture",
+  );
+  await page.locator("#app").evaluate((el) => {
+    el.scrollTop = 0;
+  });
+  await page.screenshot({
+    path: testInfo.outputPath("route-overview-synthetic.png"),
+  });
+});
+test("G2 PNG keeps real tile detail bright on black and distinguishes route and current position", async ({
+  page,
+}, testInfo) => {
+  const result = await page.evaluate(async () => {
+    const path = "/src/map.ts";
+    const { NavigationMap, project, unproject } = await import(path);
+    const tile = document.createElement("canvas");
+    tile.width = tile.height = 256;
+    const c = tile.getContext("2d")!;
+    c.fillStyle = "#fff";
+    c.fillRect(0, 0, 256, 256);
+    c.fillStyle = "#888";
+    c.fillRect(0, 200, 256, 8);
+    const blob = await new Promise<Blob>((resolve) =>
+      tile.toBlob((b) => resolve(b!), "image/png"),
+    );
+    const renderer = new NavigationMap({
+      request: async (path: string) =>
+        path.endsWith("session")
+          ? { session: "synthetic", expiry: String(Date.now() / 1000 + 600) }
+          : { copyright: "Synthetic contrast fixture" },
+      fetch: async () => new Response(blob),
+    });
+    const center = { lat: 0, lng: 0 },
+      p = project(center, 16);
+    const a = unproject(p.x - 100, p.y, 16),
+      b = unproject(p.x + 100, p.y, 16);
+    const route = {
+      id: "synthetic-contrast",
+      basemapProvider: "GOOGLE_TILES",
+      attribution: ["Synthetic"],
+      legs: [{ mode: "WALK", geometry: [a, b] }],
+    };
+    await renderer.draw(center, { coordinate: b }, route, center);
+    const bytes = await renderer.pixels();
+    const png = new Blob([bytes], { type: "image/png" });
+    const bitmap = await createImageBitmap(png),
+      output = document.createElement("canvas");
+    output.width = 288;
+    output.height = 144;
+    const ctx = output.getContext("2d")!;
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    const pixel = (x: number, y: number) =>
+      Array.from(ctx.getImageData(x, y, 1, 1).data);
+    return {
+      base64: output.toDataURL().split(",")[1],
+      background: pixel(20, 40),
+      road: pixel(20, 20),
+      route: pixel(80, 72),
+      current: pixel(144, 72),
+      halo: pixel(150, 72),
+      attribution: renderer.attribution,
+    };
+  });
+  expect(result.background.slice(0, 3)).toEqual([0, 0, 0]);
+  expect(result.road[0]).toBeGreaterThanOrEqual(200);
+  expect(result.route.slice(0, 3)).toEqual([255, 255, 255]);
+  expect(result.current.slice(0, 3)).toEqual([255, 255, 255]);
+  expect(result.halo[0]).toBeLessThan(30);
+  expect(result.attribution).toContain("Synthetic contrast fixture");
+  await mkdir(testInfo.outputDir, { recursive: true });
+  await writeFile(
+    testInfo.outputPath("g2-contrast-synthetic.png"),
+    Buffer.from(result.base64, "base64"),
+  );
+});
 test("device pairing survives reload without owner entry or another pair request", async ({
   page,
 }) => {
@@ -501,6 +821,7 @@ async function startLongSyntheticNavigation(page: Page) {
 test("mobile confirmation scrolls inside app when host document scrolling is disabled", async ({
   page,
 }) => {
+  await configure(page);
   const label = "合成测试目的地・道路案内".repeat(22);
   await page.evaluate(() => {
     document.documentElement.style.overflow = "hidden";
@@ -677,4 +998,5 @@ test("failed return location pauses visibly and explicit resume restores ticks",
   ).toBeVisible();
   await page.clock.runFor(6000);
   await expect(page.locator("#nav-instruction")).toContainText("定位已过期");
+  await expect(page.locator("#nav-instruction")).not.toContainText("本段剩余");
 });

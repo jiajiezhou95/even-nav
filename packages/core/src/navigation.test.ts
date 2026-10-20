@@ -266,3 +266,49 @@ describe("boarding evidence", () => {
     expect(s.snapshot.phase).toBe("ARRIVED");
   });
 });
+
+describe("current step remaining distance", () => {
+  it("initializes, decreases and resets on leg transition, arrival and end", () => {
+    const first = leg(),
+      second = {
+        ...leg(),
+        geometry: [
+          { lat: 10.001, lng: 20 },
+          { lat: 10.002, lng: 20 },
+        ],
+        steps: [
+          {
+            ...leg().steps[0],
+            geometry: [
+              { lat: 10.001, lng: 20 },
+              { lat: 10.002, lng: 20 },
+            ],
+          },
+        ],
+      };
+    const s = running(route([first, second]));
+    expect(s.snapshot.stepRemainingMeters).toBeCloseTo(111.195, 2);
+    s.updateLocation(fix(20, 10.0005), now + 20000);
+    expect(s.snapshot.stepRemainingMeters).toBeCloseTo(55.5975, 2);
+    s.updateLocation(fix(40, 10.001), now + 40000);
+    expect(s.snapshot.legIndex).toBe(1);
+    expect(s.snapshot.stepRemainingMeters).toBeCloseTo(111.195, 2);
+    s.updateLocation(fix(60, 10.002), now + 60000);
+    expect(s.snapshot.phase).toBe("ARRIVED");
+    expect(s.snapshot.stepRemainingMeters).toBe(0);
+    const stopped = running();
+    stopped.end();
+    expect(stopped.snapshot.stepRemainingMeters).toBe(0);
+  });
+  it("preserves last measured distance for stale/paused fixes and clears on new import", () => {
+    const s = running(),
+      before = s.snapshot.stepRemainingMeters;
+    s.updateLocation(fix(1, 10.0005), now + 20000);
+    expect(s.snapshot.stepRemainingMeters).toBe(before);
+    s.pause();
+    s.updateLocation(fix(21, 10.0005), now + 21000);
+    expect(s.snapshot.stepRemainingMeters).toBe(before);
+    s.beginRequest("IMPORTING");
+    expect(s.snapshot.stepRemainingMeters).toBe(0);
+  });
+});

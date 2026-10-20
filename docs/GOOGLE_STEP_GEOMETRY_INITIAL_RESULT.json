@@ -1,0 +1,10 @@
+{
+  "evidence": "LIVE_PROVIDER_PUBLIC_ROUTE_CANONICAL_GEOMETRY",
+  "at": "2026-10-20T16:14:42.819Z",
+  "http": 502,
+  "routeCount": 0,
+  "stepCounts": [],
+  "canonicalStepGeometry": false,
+  "googleCalls": 1,
+  "hardware": "NOT_TESTED"
+}

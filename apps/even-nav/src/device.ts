@@ -184,6 +184,8 @@ export class EvenDevice {
                 containerID: id,
                 containerName: name,
                 content,
+                contentOffset: 0,
+                contentLength: 0,
               }),
             ))
           )

@@ -4,6 +4,36 @@ import { project, unproject } from "./map";
 import { staleInstruction } from "./freshness";
 
 describe("official SDK boundary and display queue", () => {
+  it("fully replaces each current-step text and submits new map bytes in order", async () => {
+    const sent: { containerID: number; content: string; contentOffset: number; contentLength: number }[] = [];
+    const images: number[][] = [];
+    const bridge = {
+      createStartUpPageContainer: vi.fn(async () => 0),
+      textContainerUpgrade: vi.fn(async (value) => {
+        sent.push(value);
+        return true;
+      }),
+      updateImageRawData: vi.fn(async (value) => {
+        images.push(value.imageData);
+        return "success";
+      }),
+    };
+    const device = new EvenDevice(() => {}, () => {}, () => {});
+    Object.assign(device, { bridge, connected: true, source: "EVEN" });
+    device.setVersion(1);
+    const frame = (sequence: number, instruction: string) => ({
+      sequence, version: 1, instruction, pixels: new Uint8Array([sequence]),
+      status: "测试定位", attribution: "Synthetic map",
+    });
+    device.queue.push(frame(1, "沿架空道路继续前行至下一个路口"));
+    await vi.waitFor(() => expect(device.lastSubmission?.sequence).toBe(1));
+    device.queue.push(frame(2, "向左转"));
+    await vi.waitFor(() => expect(device.lastSubmission?.sequence).toBe(2));
+    expect(sent.filter(value => value.containerID === 2).map(value => value.content))
+      .toEqual(["沿架空道路继续前行至下一个路口", "向左转"]);
+    expect(sent.every(value => value.contentOffset === 0 && value.contentLength === 0)).toBe(true);
+    expect(images).toEqual([[1], [2]]);
+  });
   it("coalesces concurrent native starts and awaits pending start before stopping", async () => {
     let release!: (value: boolean) => void;
     const unsubscribe = vi.fn();
