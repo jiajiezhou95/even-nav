@@ -154,6 +154,7 @@ describe("providers", () => {
       const args = vi.mocked(f).mock.calls[0];
       const body = JSON.parse(args[1]!.body as string);
       expect(body.travelMode).toBe(mode);
+      expect(body.languageCode).toBe("zh-CN");
       expect(body.routingPreference).toBe(
         mode === "DRIVE" ? "TRAFFIC_UNAWARE" : undefined,
       );
@@ -296,10 +297,40 @@ describe("providers", () => {
     expect(r[0].legs.filter((l) => l.mode === "RIDE")).toHaveLength(n);
     expect(r[0].legs.some((l) => l.mode === "WAIT")).toBe(true);
     expect(r[0].legs.at(-1)?.mode).toBe("WALK");
+    expect(r[0].legs[0].steps[0].instruction).toBe("继续直行 · Synthetic");
     expect(new URL(String(vi.mocked(f).mock.calls[0][0])).pathname).toBe(
       "/api/v6/plan",
     );
   });
+  it.each([
+    ["LEFT", "向左转"],
+    ["RIGHT", "向右转"],
+    ["UNKNOWN_FUTURE_ACTION", "沿路线前进"],
+    ["constructor", "沿路线前进"],
+  ])(
+    "localizes transit walking actions and preserves local road names: %s",
+    async (action, label) => {
+      const walk = leg("WALK", 0, 1);
+      walk.steps![0].relativeDirection = action;
+      walk.steps![0].streetName = "架空通り";
+      const routes = await transitRoutes(
+        { ...trip, mode: "TRANSIT", routeProvider: "TRANSITOUS" },
+        "test",
+        mock({
+          itineraries: [
+            {
+              duration: 240,
+              legs: [walk, leg("SUBWAY", 1, 3), leg("WALK", 3, 4)],
+            },
+          ],
+        }),
+      );
+      expect(routes[0].legs[0].steps[0].instruction).toBe(
+        `${label} · 架空通り`,
+      );
+      expect(routes[0].legs[0].steps[0].maneuver).toBe(action);
+    },
+  );
   it.each([
     ["Synthetic Line", "SL", "123456", "Synthetic Line"],
     ["", "SL", "123456", "SL"],

@@ -453,3 +453,228 @@ test("offline forget reports local removal separately from unconfirmed server re
     await page.evaluate((key) => localStorage.getItem(key), credentialKey),
   ).toBeNull();
 });
+
+async function startLongSyntheticNavigation(page: Page) {
+  await configure(page);
+  await page.route("https://worker.test/v1/routes/road", (route) => {
+    const request = route.request().postDataJSON();
+    const legs = Array.from({ length: 18 }, (_, i) => ({
+      mode: "WALK",
+      distanceMeters: 230,
+      durationSeconds: 180,
+      geometry: [request.origin, request.destination.coordinate],
+      steps: [
+        {
+          instruction: `合成测试第 ${i + 1} 段：沿道路前行至下一路口`,
+          geometry: [request.origin, request.destination.coordinate],
+          distanceMeters: 230,
+          durationSeconds: 180,
+        },
+      ],
+    }));
+    return route.fulfill({
+      json: {
+        requestVersion: request.requestVersion,
+        routes: [
+          {
+            id: "synthetic-long-route",
+            provider: "GOOGLE_ROUTES",
+            basemapProvider: "GOOGLE_TILES",
+            fetchedAt: new Date().toISOString(),
+            expiresAt: new Date(Date.now() + 600000).toISOString(),
+            distanceMeters: 4140,
+            durationSeconds: 3240,
+            warnings: [],
+            attribution: ["Synthetic UI fixture"],
+            legs,
+          },
+        ],
+      },
+    });
+  });
+  await page.getByLabel("GOOGLE MAPS 分享链接").fill(link);
+  await page.getByRole("button", { name: /导入链接/ }).click();
+  await page.getByRole("button", { name: "确认目的地，查询路线" }).click();
+  await page.getByRole("button", { name: "开始导航 ↗" }).click();
+  await expect(page.locator(".navigation")).toBeVisible();
+}
+test("mobile confirmation scrolls inside app when host document scrolling is disabled", async ({
+  page,
+}) => {
+  const label = "合成测试目的地・道路案内".repeat(22);
+  await page.evaluate(() => {
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+  });
+  await page
+    .getByLabel("GOOGLE MAPS 分享链接")
+    .fill(
+      `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(label)}`,
+    );
+  await page.getByRole("button", { name: /导入链接/ }).click();
+  const app = page.locator("#app");
+  await expect
+    .poll(() => app.evaluate((el) => el.scrollHeight > el.clientHeight))
+    .toBe(true);
+  await app.evaluate((el) => {
+    el.scrollTop = 0;
+  });
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true });
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{ x: 370, y: 700 }],
+  });
+  for (let y = 650; y >= 250; y -= 50)
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [{ x: 370, y }],
+    });
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchEnd",
+    touchPoints: [],
+  });
+  await expect
+    .poll(() => app.evaluate((el) => el.scrollTop))
+    .toBeGreaterThan(100);
+  await page
+    .getByRole("button", { name: "确认目的地，查询路线" })
+    .scrollIntoViewIfNeeded();
+  await expect(
+    page.getByRole("button", { name: "确认目的地，查询路线" }),
+  ).toBeInViewport();
+});
+test("navigation ticks keep details nodes and mobile scroll position", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await startLongSyntheticNavigation(page);
+  await page
+    .locator(".navigation details")
+    .evaluate((el: HTMLDetailsElement) => {
+      el.open = true;
+    });
+  await page.locator("#app").evaluate((el) => {
+    el.scrollTop = 700;
+  });
+  const original = await page.locator(".navigation details").elementHandle();
+  const before = await page.locator("#app").evaluate((el) => el.scrollTop);
+  await page.clock.runFor(2200);
+  expect(
+    await original!.evaluate(
+      (el) => el === document.querySelector(".navigation details"),
+    ),
+  ).toBe(true);
+  expect(
+    await page
+      .locator(".navigation details")
+      .evaluate((el: HTMLDetailsElement) => el.open),
+  ).toBe(true);
+  expect(await page.locator("#app").evaluate((el) => el.scrollTop)).toBeCloseTo(
+    before,
+    0,
+  );
+  expect(before).toBeGreaterThan(100);
+});
+test("page return restores one subscription and respects pause and end", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    const geo = navigator.geolocation;
+    const originalWatch = geo.watchPosition.bind(geo),
+      originalClear = geo.clearWatch.bind(geo);
+    const counts = { starts: 0, stops: 0 };
+    Object.assign(window, { lifecycleCounts: counts });
+    geo.watchPosition = (...args) => {
+      counts.starts++;
+      return originalWatch(...args);
+    };
+    geo.clearWatch = (id) => {
+      counts.stops++;
+      return originalClear(id);
+    };
+  });
+  await startLongSyntheticNavigation(page);
+  const counts = () =>
+    page.evaluate(
+      () =>
+        (
+          window as Window & {
+            lifecycleCounts?: { starts: number; stops: number };
+          }
+        ).lifecycleCounts!,
+    );
+  expect(await counts()).toEqual({ starts: 1, stops: 0 });
+  await page.evaluate(() =>
+    window.dispatchEvent(
+      new PageTransitionEvent("pagehide", { persisted: true }),
+    ),
+  );
+  await expect.poll(counts).toEqual({ starts: 1, stops: 1 });
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new PageTransitionEvent("pageshow", { persisted: true }),
+    );
+    window.dispatchEvent(
+      new PageTransitionEvent("pageshow", { persisted: true }),
+    );
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect.poll(counts).toEqual({ starts: 2, stops: 1 });
+  await page.getByRole("button", { name: "暂停", exact: true }).click();
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new PageTransitionEvent("pagehide", { persisted: true }),
+    );
+    window.dispatchEvent(
+      new PageTransitionEvent("pageshow", { persisted: true }),
+    );
+  });
+  await expect.poll(counts).toEqual({ starts: 2, stops: 2 });
+  await page.getByRole("button", { name: "结束", exact: true }).click();
+  await page.evaluate(() =>
+    window.dispatchEvent(
+      new PageTransitionEvent("pageshow", { persisted: true }),
+    ),
+  );
+  await expect.poll(counts).toEqual({ starts: 2, stops: 2 });
+});
+test("failed return location pauses visibly and explicit resume restores ticks", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await startLongSyntheticNavigation(page);
+  await page.evaluate(() => {
+    const geo = navigator.geolocation;
+    const original = geo.getCurrentPosition.bind(geo);
+    let failNext = true;
+    geo.getCurrentPosition = (success, error, options) => {
+      if (failNext) {
+        failNext = false;
+        error?.({
+          code: 2,
+          message: "Synthetic unavailable",
+          PERMISSION_DENIED: 1,
+          POSITION_UNAVAILABLE: 2,
+          TIMEOUT: 3,
+        });
+      } else original(success, error, options);
+    };
+    window.dispatchEvent(
+      new PageTransitionEvent("pagehide", { persisted: true }),
+    );
+    window.dispatchEvent(
+      new PageTransitionEvent("pageshow", { persisted: true }),
+    );
+  });
+  await expect(
+    page.getByRole("button", { name: "继续", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator("#message")).toContainText("浏览器定位不可用");
+  await page.getByRole("button", { name: "继续", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "暂停", exact: true }),
+  ).toBeVisible();
+  await page.clock.runFor(6000);
+  await expect(page.locator("#nav-instruction")).toContainText("定位已过期");
+});

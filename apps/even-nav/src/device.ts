@@ -96,6 +96,7 @@ export class EvenDevice {
   private subscribed = false;
   private connecting?: Promise<void>;
   private locationStarting?: Promise<void>;
+  private locationStopping?: Promise<void>;
   private pageCreated = false;
   private version = 0;
   connected = false;
@@ -306,6 +307,7 @@ export class EvenDevice {
     };
   }
   async startLocation() {
+    if (this.locationStopping) await this.locationStopping;
     if (this.subscribed) return;
     if (this.locationStarting) return this.locationStarting;
     this.locationStarting = this.startLocationNative();
@@ -331,7 +333,7 @@ export class EvenDevice {
         !(await this.bridge!.startAppLocationUpdates({
           accuracy: AppLocationAccuracy.High,
           intervalMs: 1000,
-          distanceFilter: 2,
+          distanceFilter: 0,
         }))
       ) {
         this.unsubscribeLocation();
@@ -345,6 +347,15 @@ export class EvenDevice {
     this.subscribed = true;
   }
   async stopLocation() {
+    if (this.locationStopping) return this.locationStopping;
+    this.locationStopping = this.stopLocationNative();
+    try {
+      await this.locationStopping;
+    } finally {
+      this.locationStopping = undefined;
+    }
+  }
+  private async stopLocationNative() {
     if (this.locationStarting) await this.locationStarting.catch(() => {});
     this.unsubscribeLocation?.();
     this.unsubscribeLocation = undefined;

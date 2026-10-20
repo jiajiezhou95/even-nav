@@ -56,3 +56,17 @@ Native connection repair (2026-10-21, REPAIR_RESUME):
 - Targeted Worker suite: 38 tests PASS, including port changes, opt-out, missing authentication and malformed/foreign origins.
 - Deployed Worker version `e4f3b1ad-76b2-44b8-ac7e-8fb7abf1c85f`. Live repair probe: matching preflight204; no credential401; foreign origin401; pair200; device capabilities200; revoke200; revoked device401. Zero Google/Transitous calls. This is a computer-originated probe using the observed native Origin, not proof of phone success.
 - Existing Beta 0.1.1 package remains compatible and unchanged. Phone retry, native relaunch persistence, G2 same-frame display and lockscreen navigation remain pending.
+
+Subsequent phone observations and language repair (2026-10-21):
+- User confirmed backend connected after CORS repair, then confirmed automatic backend connection after force-closing and reopening Even App without entering credentials. This establishes that observed native credential-restoration case, not navigation continuity.
+- User screenshots show phone route/map rendering and an expired fix. They do not establish G2 optical display. User also reports inability to scroll down on the phone.
+- Google route requests now specify `zh-CN`; map labels and local place names retain their local language. `GOOGLE_LANGUAGE_LIVE_RESULT.json` records one public WALK call returning Chinese actions with Japanese road names, HTTP200; no private coordinates or destinations were used. DRIVE shares the tested request construction but was not called again.
+- Transit walking action enums are rendered in Chinese while road names and maneuver identifiers are retained. Unknown actions use a neutral Chinese fallback. Provider tests: 40 PASS. This text-only conversion reuses existing live Transitous evidence; no new Transitous call.
+
+Beta 0.1.2 targeted repair:
+- Phone UI now owns its viewport scroll container, including when the host disables document scrolling. Navigation ticks update telemetry in place instead of replacing the itinerary and interrupting touch/scroll.
+- Native location requests use zero distance filtering. This removes a possible stationary-update filter; it does not guarantee host cadence. Actual native measurement timestamps and stale thresholds are unchanged.
+- Page return restores one location subscription and health timer after pagehide. Pause/end remain respected; failed restoration visibly pauses and supports explicit resume.
+- Browser/mock acceptance: four targeted Playwright regressions PASS (touch scrolling, stable navigation nodes/scroll, page return, failed return then resume); device adapter seven tests PASS; integrated TypeScript PASS. No real iPhone scroll/fix or lockscreen PASS inferred.
+- Official private Beta 0.1.2 uploaded/promoted; public channel remains null. Downloaded package matches local SHA256 `a27ce0b7108ce4ac780491cc59ceaa0030a0d4a03735e13e0e60dab65a0589a2`, 70,446 bytes. Build/privacy scan PASS.
+- Worker final deployment `4238fc94-d961-42c4-bb43-dd190fd46343`. This checkpoint used one Google Routes call and zero Transitous calls; no billing invoice measurement.

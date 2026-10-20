@@ -79,6 +79,11 @@ let mapError = "",
 let mapBusy = false,
   mapPending = false,
   previousMapVersion = -1;
+let navigationViewKey = "";
+let pageSuspended = false,
+  lifecycleEpoch = 0;
+let lifecycleStop: Promise<void> = Promise.resolve();
+let lifecycleRestore: Promise<void> | undefined;
 let lastMapFrame:
   | {
       version: number;
@@ -191,6 +196,14 @@ function itinerary(route: Route) {
     )
     .join("");
 }
+function updateNavigationTelemetry(state = session.snapshot) {
+  $("#nav-instruction").textContent = instruction(state);
+  $("#nav-distance").textContent = distance(state.remainingMeters);
+  $("#nav-fix").textContent =
+    `最后可靠定位：${state.location ? time(state.location.timestamp) + " JST" : "未知"}${state.locationStale ? " · 定位过期，请检查现场" : ""}`;
+  $("#nav-fix").className = state.locationStale ? "warning" : "muted";
+  $("#nav-replan").hidden = !state.replanNeeded;
+}
 function render() {
   const stepsOpen = Boolean(
     document.querySelector<HTMLDetailsElement>(".navigation details")?.open,
@@ -203,6 +216,29 @@ function render() {
     "navigating",
     ["NAVIGATING", "ARRIVED"].includes(state.phase),
   );
+  // GPS and health ticks update text only: preserve the user's touch target,
+  // expanded itinerary and scroll position while the navigation structure is unchanged.
+  const nextNavigationKey = ["NAVIGATING", "ARRIVED"].includes(state.phase)
+    ? JSON.stringify([
+        state.phase,
+        state.route?.id,
+        state.legIndex,
+        state.paused,
+        state.boarded,
+        mode,
+        busy,
+        device.source,
+      ])
+    : "";
+  if (
+    nextNavigationKey &&
+    navigationViewKey === nextNavigationKey &&
+    $("#nav-instruction")
+  ) {
+    updateNavigationTelemetry(state);
+    return;
+  }
+  navigationViewKey = nextNavigationKey;
   let html = "";
   if (busy)
     html += `<div class="loading" role="status"><span class="spinner"></span>${state.phase === "PLANNING" ? "正在查询实际路线…" : "正在处理输入…"}<button id="cancel" class="text-button">取消</button></div>`;
@@ -252,9 +288,9 @@ function render() {
   }
   if (["NAVIGATING", "ARRIVED"].includes(state.phase)) {
     const leg = state.route?.legs[state.legIndex];
-    html += `<section class="panel navigation"><div class="section-label"><span>${state.phase === "ARRIVED" ? "到达附近" : state.paused ? "已暂停" : "03 / 导航中"}</span><span>${device.source === "BROWSER_DEV" ? "浏览器开发预览" : "Even 手机定位"}</span></div><h2>${escape(instruction())}</h2><div class="big-distance">${distance(state.remainingMeters)}<span>剩余距离</span></div>
-      <p class="${state.locationStale ? "warning" : "muted"}">最后可靠定位：${state.location ? time(state.location.timestamp) + " JST" : "未知"}${state.locationStale ? " · 定位过期，请检查现场" : ""}</p>
-      ${state.replanNeeded ? '<p class="warning">检测到偏航、路线过期或错过发车，请重新规划。</p>' : ""}
+    html += `<section class="panel navigation"><div class="section-label"><span>${state.phase === "ARRIVED" ? "到达附近" : state.paused ? "已暂停" : "03 / 导航中"}</span><span>${device.source === "BROWSER_DEV" ? "浏览器开发预览" : "Even 手机定位"}</span></div><h2 id="nav-instruction">${escape(instruction())}</h2><div class="big-distance"><strong id="nav-distance">${distance(state.remainingMeters)}</strong><span>剩余距离</span></div>
+      <p id="nav-fix" class="${state.locationStale ? "warning" : "muted"}">最后可靠定位：${state.location ? time(state.location.timestamp) + " JST" : "未知"}${state.locationStale ? " · 定位过期，请检查现场" : ""}</p>
+      <p id="nav-replan" class="warning" ${state.replanNeeded ? "" : "hidden"}>检测到偏航、路线过期或错过发车，请重新规划。</p>
       <div class="nav-actions"><button id="pause" class="secondary">${state.paused ? "继续" : "暂停"}</button><button id="replan" class="secondary">重新规划</button><button id="end" class="secondary danger">结束</button></div>
       ${mode === "TRANSIT" && !state.paused ? `<div class="transit-actions">${leg?.mode === "WAIT" || (leg?.mode === "RIDE" && !state.boarded) ? '<button data-transit="BOARDED" class="secondary">已上车</button>' : ""}${leg?.mode === "RIDE" && state.boarded ? '<button data-transit="ALIGHTED" class="secondary">已下车</button>' : ""}${leg?.mode === "TRANSFER" ? '<button data-transit="TRANSFER_COMPLETED" class="secondary">已完成换乘</button>' : ""}</div><p class="small muted">地下无 GPS 时依靠你的确认推进；计划时刻不会证明已上车或到站。</p>` : ""}
       <details><summary>查看完整行程</summary><ol class="legs">${state.route ? itinerary(state.route) : ""}</ol></details></section>`;
@@ -510,12 +546,7 @@ async function start() {
     device.setVersion(session.snapshot.version);
     await device.startLocation();
     busy = false;
-    if (tick) clearInterval(tick);
-    tick = setInterval(() => {
-      session.refreshHealth();
-      render();
-      void drawMap();
-    }, 1000);
+    startNavigationTick();
     render();
     await drawMap();
   } catch (caught) {
@@ -526,6 +557,14 @@ async function start() {
     busy = false;
     report(caught);
   }
+}
+function startNavigationTick() {
+  if (tick || pageSuspended) return;
+  tick = setInterval(() => {
+    session.refreshHealth();
+    render();
+    void drawMap();
+  }, 1000);
 }
 function onFix(value: DeviceFix) {
   fix = value;
@@ -562,6 +601,7 @@ async function handleAction(action: "PAUSE" | "RESUME" | "END") {
       device.setVersion(session.snapshot.version);
       await device.locate();
       await device.startLocation();
+      startNavigationTick();
     }
     render();
     if (action !== "END") await drawMap();
@@ -570,6 +610,7 @@ async function handleAction(action: "PAUSE" | "RESUME" | "END") {
   }
 }
 async function drawMap() {
+  if (pageSuspended) return;
   const state = session.snapshot;
   const route =
     state.route && ["NAVIGATING", "ARRIVED"].includes(state.phase)
@@ -866,11 +907,72 @@ map.canvas.onclick = (event) => {
   });
 };
 window.addEventListener("pagehide", () => {
-  void stopNavigation(false);
+  pageSuspended = true;
+  lifecycleEpoch++;
+  lifecycleStop = stopNavigation(false).catch(report);
   map.dispose();
 });
+async function restorePageNavigation() {
+  if (!pageSuspended) return;
+  if (lifecycleRestore) return lifecycleRestore;
+  const epoch = lifecycleEpoch,
+    version = session.snapshot.version;
+  const stillActive = () =>
+    lifecycleEpoch === epoch &&
+    session.snapshot.version === version &&
+    session.snapshot.phase === "NAVIGATING" &&
+    !session.snapshot.paused;
+  lifecycleRestore = (async () => {
+    await lifecycleStop;
+    if (lifecycleEpoch !== epoch) return;
+    if (!stillActive()) {
+      pageSuspended = false;
+      return;
+    }
+    try {
+      session.refreshHealth();
+      notice =
+        "已回到页面；正在核对定位与行程有效期。恢复不代表锁屏期间持续更新。";
+      render();
+      await device.locate();
+      if (!stillActive()) {
+        if (lifecycleEpoch === epoch) pageSuspended = false;
+        return;
+      }
+      device.setVersion(version);
+      await device.startLocation();
+      if (!stillActive()) {
+        await device.stopLocation();
+        if (lifecycleEpoch === epoch) pageSuspended = false;
+        return;
+      }
+      pageSuspended = false;
+      startNavigationTick();
+      render();
+      void drawMap();
+    } catch (caught) {
+      if (lifecycleEpoch === epoch) {
+        pageSuspended = false;
+        if (stillActive()) session.pause();
+      }
+      report(caught);
+    }
+  })();
+  try {
+    await lifecycleRestore;
+  } finally {
+    lifecycleRestore = undefined;
+  }
+}
+window.addEventListener("pageshow", () => void restorePageNavigation());
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && session.snapshot.phase === "NAVIGATING") {
+  if (document.hidden) return;
+  if (pageSuspended) {
+    void restorePageNavigation();
+  } else if (
+    session.snapshot.phase === "NAVIGATING" &&
+    !session.snapshot.paused
+  ) {
     session.refreshHealth();
     notice =
       "已回到页面；正在核对定位与行程有效期。恢复不代表锁屏期间持续更新。";

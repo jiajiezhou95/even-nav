@@ -106,7 +106,7 @@ export function createWorker(fetcher: Fetcher = fetch) {
         }
         const u = new URL(request.url);
         if (u.pathname === "/health" && request.method === "GET")
-          result = json({ status: "ok", version: "0.1.1" });
+          result = json({ status: "ok", version: "0.1.2" });
         else {
           const identity = await authenticate(
             request,

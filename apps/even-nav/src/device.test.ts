@@ -28,12 +28,47 @@ describe("official SDK boundary and display queue", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(bridge.startAppLocationUpdates).toHaveBeenCalledTimes(1);
+    expect(bridge.startAppLocationUpdates).toHaveBeenCalledWith(
+      expect.objectContaining({ intervalMs: 1000, distanceFilter: 0 }),
+    );
     const stop = device.stopLocation();
+    const secondStop = device.stopLocation();
     release(true);
-    await Promise.all([first, second, stop]);
+    await Promise.all([first, second, stop, secondStop]);
     expect(bridge.onAppLocationChanged).toHaveBeenCalledTimes(1);
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect(bridge.stopAppLocationUpdates).toHaveBeenCalledTimes(1);
+  });
+  it("forwards stationary native fixes with their actual measurement timestamps", async () => {
+    const receive = vi.fn();
+    let callback!: (location: {
+      latitude: number;
+      longitude: number;
+      timestamp: number;
+    }) => void;
+    const bridge = {
+      onAppLocationChanged: vi.fn((listener) => {
+        callback = listener;
+        return () => {};
+      }),
+      startAppLocationUpdates: vi.fn(async () => true),
+      stopAppLocationUpdates: vi.fn(async () => true),
+    };
+    const device = new EvenDevice(
+      receive,
+      () => {},
+      () => {},
+    );
+    Object.assign(device, { bridge, source: "EVEN" });
+    await device.startLocation();
+    const now = Date.now();
+    callback({ latitude: 35, longitude: 139, timestamp: now - 1000 });
+    callback({ latitude: 35, longitude: 139, timestamp: now });
+    expect(receive.mock.calls.map(([fix]) => fix.timestamp)).toEqual([
+      now - 1000,
+      now,
+    ]);
+    await device.stopLocation();
   });
   it("serializes sends and replaces all intermediate pending frames", async () => {
     const submitted: number[] = [];

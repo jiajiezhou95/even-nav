@@ -8,6 +8,21 @@ import {
   type RouteLeg,
 } from "../../contracts/src/index";
 export type Fetcher = typeof fetch;
+const walkingActions: Record<string, string> = {
+  DEPART: "出发",
+  CONTINUE: "继续直行",
+  SLIGHTLY_LEFT: "稍向左转",
+  LEFT: "向左转",
+  HARD_LEFT: "向左急转",
+  SLIGHTLY_RIGHT: "稍向右转",
+  RIGHT: "向右转",
+  HARD_RIGHT: "向右急转",
+  CIRCLE_CLOCKWISE: "顺时针绕行环岛",
+  CIRCLE_COUNTERCLOCKWISE: "逆时针绕行环岛",
+  ELEVATOR: "乘坐电梯",
+  UTURN_LEFT: "向左掉头",
+  UTURN_RIGHT: "向右掉头",
+};
 export interface ProviderDiagnostic {
   stage: "HTTP" | "TRANSPORT" | "SCHEMA";
   httpStatus?: number;
@@ -245,7 +260,7 @@ export async function googleRoutes(
     intermediates: t.waypoints.map((p) => wp(p.coordinate!)),
     travelMode: t.mode,
     computeAlternativeRoutes: t.waypoints.length === 0,
-    languageCode: "ja",
+    languageCode: "zh-CN",
     units: "METRIC",
     ...(t.mode === "DRIVE"
       ? {
@@ -482,7 +497,7 @@ export async function transitRoutes(
         realtime: l.realTime,
         staySeated: l.interlineWithPreviousLeg,
         steps: (l.steps ?? []).map((s) => ({
-          instruction: `${s.relativeDirection} ${s.streetName}`.trim(),
+          instruction: `${Object.hasOwn(walkingActions, s.relativeDirection) ? walkingActions[s.relativeDirection] : "沿路线前进"}${s.streetName ? ` · ${s.streetName}` : ""}`,
           maneuver: s.relativeDirection,
           geometry: decodePolyline(s.polyline.points, s.polyline.precision),
           distanceMeters: s.distance,
