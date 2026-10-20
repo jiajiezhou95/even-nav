@@ -18,7 +18,7 @@ This is implementation/checkpoint evidence, not clean final live or hardware acc
 | REAL_G2 | NOT RUN | Device display, attribution, native fix times and legibility not observed |
 | LOCKSCREEN_CONTINUOUS | NOT RUN | WALK/DRIVE/TRANSIT each5/30/60min remain unobserved |
 | RESUME | NOT RUN real device | Pause/resume deterministic/browser behavior only; host restart persistence not accepted |
-| PRIVATE_BETA_INSTALL | BLOCKED | Official CLI self-check says unauthenticated; package ready for local sign-in/upload |
+| PRIVATE_BETA_INSTALL | PENDING USER | Private Beta 0.1.0 uploaded; owner invitation pending acceptance. Actual iPhone installation NOT RUN |
 
 Commands: project-local Node22 invokes `tsc --noEmit`, `vitest run`, `playwright test`, `scripts/replay.ts`, `scripts/pack.ts`, `scripts/privacy-check.ts`. All live probes opt-in; routine CI uses no private fixtures or provider credentials.
 
@@ -32,3 +32,10 @@ Transit coverage checkpoint (REPAIR_RESUME, not final E2E):
 - Relevant provider/Worker tests 56 PASS; TypeScript PASS. Deployed version `f9fb67ec-9e58-4a4f-8796-ef5a8e7fce9f`. The ten-case chronology/geometry results predate the name-only correction and are reused, not claimed as fresh runs.
 - This checkpoint: 12 Transitous calls, 0 Google calls. Total recorded Transitous attempts to date: 16 (3 failed before transport repair, 1 successful repair probe, 12 here).
 - Runner: local Node22 `--import tsx scripts/probe-transit-coverage.ts`; default is plan-only. `--execute` runs at most ten calls, serially, without retry; `--case=<exact public case name>` narrows to one. Auth/quota/provider/network failure stops the batch.
+
+Private Beta delivery checkpoint (2026-10-20):
+- Official CLI authenticated successfully; account initially had no apps.
+- Created `io.github.jiajiezhou95.evennav` version `0.1.0` with original icon and description. Promoted only to Beta.
+- Readback: app status `Private`, Beta `0.1.0`, public channel `null`; exactly one tester (owner), status `Invited`. No public review or publication.
+- Official CLI downloaded the uploaded build into ignored local storage. SHA256 matches local artifact: `6e6aee97b0d4e7f8b066088175da983e4e9a8554ca701068bb8805b50470b9f7`.
+- Upload/readback PASS is distinct from invitation acceptance, installation, REAL_G2 and LOCKSCREEN, which remain unverified.
