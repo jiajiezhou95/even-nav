@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { createWorker, type Env } from "./index";
 import { imuUploadSchema } from "./imu-upload";
+import { secretHash } from "./auth";
 import { QuotaLedger, type Store, type QuotaNamespace } from "./quota";
 
 class Memory implements Store {
@@ -98,6 +99,9 @@ it("validates strict private-data-free shape, finite bounded axes/time, order an
     { ...upload, gps: { lat: 1, lon: 2 } },
     { ...upload, samples: [{ ...sample, token: "private" }] },
     { ...upload, schemaVersion: 2 },
+    { ...upload, label: "private free text" },
+    { ...upload, label: null },
+    { ...upload, label: { phase: "still" } },
     { ...upload, samples: [] },
     { ...upload, samples: Array.from({ length: 6001 }, () => sample) },
     ...[
@@ -126,7 +130,7 @@ it("validates strict private-data-free shape, finite bounded axes/time, order an
   expect(s.provider).not.toHaveBeenCalled();
 });
 
-it("supports 6000 samples with bounded fixed storage and removes prior samples on overwrite", async () => {
+it("supports 6000 samples and keeps both uploads readable by ID", async () => {
   const s = setup();
   const body = {
     schemaVersion: 1,
@@ -138,14 +142,122 @@ it("supports 6000 samples with bounded fixed storage and removes prior samples o
   };
   expect((await s.request(body)).status).toBe(200);
   expect(await (await s.request()).json()).toMatchObject(body);
-  expect(s.store.data.size).toBe(25);
+  expect(s.store.data.size).toBe(26);
   const old = await (await s.request()).json();
-  await s.request(upload);
+  await s.request({ ...upload, label: "left" });
   const latest = await (await s.request()).json();
   expect(latest.id).not.toBe(old.id);
   expect(latest.samples).toEqual([sample]);
-  expect(s.store.data.size).toBe(25);
+  expect(latest.label).toBe("left");
+  expect(latest.samples[0].phase).toBe("still");
+  expect(s.store.data.size).toBe(50);
+  expect(s.store.data.get("imu:slot:1:23")).toEqual([]);
+  expect(
+    await (await s.request(undefined, token, `${path}/${old.id}`)).json(),
+  ).toEqual(old);
+  expect(
+    await (await s.request(undefined, token, `${path}/${latest.id}`)).json(),
+  ).toEqual(latest);
+  const listed = await (
+    await s.request(undefined, token, `${path}/list`)
+  ).json();
+  expect(listed.reports.map((r: { id: string }) => r.id)).toEqual([
+    latest.id,
+    old.id,
+  ]);
+  expect(listed.reports[0].label).toBe("left");
+  expect(listed.reports[0].samples).toBeUndefined();
+});
+
+it("migrates the existing latest record without changing its ID or samples", async () => {
+  const s = setup();
+  const legacy = {
+    id: crypto.randomUUID(),
+    receivedAt: "2026-10-20T00:00:00.000Z",
+    sampleCount: 1,
+    ownerHash: await secretHash(token),
+  };
+  await s.store.put("imu:latest", legacy);
+  for (let i = 0; i < 24; i++)
+    await s.store.put(`imu:latest:${i}`, i === 0 ? [sample] : []);
+  const before = await (await s.request()).json();
+  expect(
+    (await (await s.request(undefined, token, `${path}/list`)).json())
+      .reports[0].id,
+  ).toBe(legacy.id);
+  await s.request({ ...upload, label: "nod" });
+  expect(
+    await (await s.request(undefined, token, `${path}/${legacy.id}`)).json(),
+  ).toEqual(before);
+  expect(
+    (await (await s.request(undefined, token, `${path}/list`)).json()).reports,
+  ).toHaveLength(2);
+});
+
+it("retains exactly 20 reports, overwrites oldest chunks and does not grow storage", async () => {
+  const s = setup();
+  const first = await (
+    await s.request({
+      schemaVersion: 1,
+      samples: Array.from({ length: 6000 }, () => sample),
+    })
+  ).json();
+  const ids = [first.id];
+  for (let i = 0; i < 21; i++)
+    ids.push((await (await s.request(upload)).json()).id);
+  const listed = await (
+    await s.request(undefined, token, `${path}/list`)
+  ).json();
+  expect(listed.reports.map((r: { id: string }) => r.id)).toEqual(
+    ids.slice(-20).reverse(),
+  );
+  expect(s.store.data.size).toBe(482);
   expect(s.store.data.get("imu:latest:23")).toEqual([]);
+  expect(
+    (await s.request(undefined, token, `${path}/${first.id}`)).status,
+  ).toBe(404);
+  expect((await s.request(undefined, token, `${path}/${ids[2]}`)).status).toBe(
+    200,
+  );
+});
+
+it("denies device reads, scopes history to owner and rejects malformed IDs", async () => {
+  const s = setup();
+  const receipt = await (await s.request(upload)).json();
+  const paired = await (await s.request({}, token, "/v1/auth/pair")).json();
+  for (const endpoint of [`${path}/list`, `${path}/${receipt.id}`]) {
+    expect(
+      (await s.request(undefined, paired.deviceToken, endpoint)).status,
+    ).toBe(401);
+    expect((await s.request(undefined, "invalid", endpoint)).status).toBe(401);
+  }
+  for (const suffix of ["not-an-id", "list/extra", `${receipt.id}/extra`])
+    expect(
+      (await s.request(undefined, token, `${path}/${suffix}`)).status,
+    ).toBe(400);
+  const other = "synthetic-other-owner-not-a-secret";
+  s.env.ACCESS_TOKEN = other;
+  expect(
+    (await s.request(undefined, other, `${path}/${receipt.id}`)).status,
+  ).toBe(404);
+  expect(
+    await (await s.request(undefined, other, `${path}/list`)).json(),
+  ).toEqual({ reports: [] });
+  const next = await (await s.request(upload, other)).json();
+  expect(
+    (
+      await (await s.request(undefined, other, `${path}/list`)).json()
+    ).reports.map((r: { id: string }) => r.id),
+  ).toEqual([next.id]);
+  s.env.ACCESS_TOKEN = token;
+  expect((await s.request(undefined, token, `${path}/${next.id}`)).status).toBe(
+    404,
+  );
+  expect(
+    (
+      await (await s.request(undefined, token, `${path}/list`)).json()
+    ).reports.map((r: { id: string }) => r.id),
+  ).toEqual([receipt.id]);
 });
 
 it("enforces streaming 1 MiB upload limit while preserving existing 16 KiB endpoint limits", async () => {
@@ -193,4 +305,70 @@ it("fails closed when diagnostic storage is missing or unavailable", async () =>
   };
   expect((await s.request(upload)).status).toBe(502);
   expect((await s.request()).status).toBe(502);
+});
+
+it("retrieval script downloads only missing reports, preserves archives and prints metadata only", async () => {
+  const existing = {
+    ...upload,
+    id: crypto.randomUUID(),
+    receivedAt: "2026-10-20T00:00:00.000Z",
+    sampleCount: 1,
+  };
+  const newest = { ...existing, id: crypto.randomUUID(), label: "left" };
+  const existingPath = `.local/imu/reports/${existing.id}.json`;
+  const files = new Map([
+    [
+      ".local/config.json",
+      JSON.stringify({
+        workerOrigin: "https://worker.test",
+        accessToken: token,
+      }),
+    ],
+    [existingPath, JSON.stringify(existing)],
+  ]);
+  const write = vi.fn((name: string, value: string) => {
+    files.set(name, value);
+  });
+  vi.doMock("node:fs", () => ({
+    existsSync: (name: string) => files.has(name),
+    mkdirSync: vi.fn(),
+    readFileSync: (name: string) => {
+      if (!files.has(name)) throw new Error("Unexpected file read");
+      return files.get(name);
+    },
+    writeFileSync: write,
+  }));
+  const fetcher = vi.fn(async (url: URL) => {
+    if (url.pathname.endsWith("/list")) {
+      return Response.json({
+        reports: [newest, existing].map(
+          ({ samples: _samples, schemaVersion: _schema, ...metadata }) =>
+            metadata,
+        ),
+      });
+    }
+    expect(url.pathname).toBe(`${path}/${newest.id}`);
+    return Response.json(newest);
+  });
+  vi.stubGlobal("fetch", fetcher);
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    await import("../../../scripts/receive-imu");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(files.get(existingPath)).toBe(JSON.stringify(existing));
+    expect(write.mock.calls.some(([name]) => name === existingPath)).toBe(
+      false,
+    );
+    expect(JSON.parse(files.get(".local/imu/latest.json")!)).toEqual(newest);
+    expect(
+      JSON.parse(files.get(`.local/imu/reports/${newest.id}.json`)!),
+    ).toEqual(newest);
+    const printed = log.mock.calls.map((args) => args.join(" ")).join("\n");
+    expect(printed).not.toContain('"samples"');
+    expect(printed).not.toContain(token);
+  } finally {
+    vi.doUnmock("node:fs");
+    vi.unstubAllGlobals();
+    log.mockRestore();
+  }
 });

@@ -13,7 +13,7 @@ import {
   type ConfirmedTripRequest,
 } from "../../../packages/contracts/src/index";
 import { WorkerClient } from "./client";
-import { EvenDevice, type DeviceFix } from "./device";
+import { EvenDevice, type DeviceAction, type DeviceFix } from "./device";
 import { NavigationMap } from "./map";
 import { staleThreshold } from "./freshness";
 import { createCredentialStore, DeviceCredentials } from "./credentials";
@@ -63,6 +63,15 @@ let imuEpoch = 0;
 let imuUploadBusy = false;
 let imuSampleRevision = 0;
 let imuUploadMessage = "";
+let imuUploadLabel: ImuProbePhase | "" = "";
+const imuActionLabels: Record<ImuProbePhase, string> = {
+  still: "保持静止",
+  left: "向左转头",
+  right: "向右转头",
+  nod: "点头",
+  tilt: "侧倾",
+  phone: "仅转动手机",
+};
 let authBusy = true;
 let credentialStatus = "正在检查此设备的配对状态…";
 let destination: EndpointCandidate | undefined,
@@ -85,6 +94,7 @@ let mapError = "",
 let mapBusy = false,
   mapPending = false,
   previousMapVersion = -1;
+let zoomRedraw: ReturnType<typeof setTimeout> | undefined;
 let navigationViewKey = "";
 let directionHistory: DeviceFix[] = [];
 let pageSuspended = false,
@@ -137,8 +147,9 @@ $("#app").innerHTML = `
     <p id="credential-status" class="small muted" aria-live="polite"></p>
     <button id="connect-backend" class="primary wide">首次配对并连接</button><button id="retry-backend" class="secondary wide">重试已保存的连接</button><button id="forget-backend" class="secondary wide danger">断开并忘记此设备</button><button id="connect-device" class="secondary wide">连接 Even App / G2</button>
     <button id="browser-location" class="text-button wide">启用浏览器开发定位</button><p class="small muted">开发定位不等于 Even GPS、G2 显示或锁屏持续导航。</p>
-    <section class="imu-controls" aria-label="眼镜传感器采样"><h3>眼镜传感器采样</h3><p class="small muted">手机放稳；仅采样，不用于导航朝向。最多 60 秒。停止后可手动上传到你的个人 Worker，仅保留最近一次上传；上传内容只有 XYZ、动作阶段和相对时间。</p>
+    <section class="imu-controls" aria-label="眼镜传感器采样"><h3>眼镜传感器采样</h3><p class="small muted">手机放稳；仅采样，不用于导航朝向。每次只做一种动作，最多 60 秒。停止后选择动作，手动上传到你的个人 Worker，保留最近 20 次上传；上传内容只有动作标签、XYZ、动作阶段和相对时间。</p>
     <button id="imu-start" class="secondary">开始采样</button><button id="imu-stop" class="secondary" disabled>停止采样</button>
+    <p class="small muted">采样过程中的分段标记（可选）</p>
     <div class="imu-phases">${Object.entries({
       still: "静止",
       left: "向左转头",
@@ -153,7 +164,13 @@ $("#app").innerHTML = `
       )
       .join("")}</div>
     <p id="imu-stats" class="small" aria-live="polite">尚未采样</p>
-    <div id="imu-export" hidden><button id="imu-upload" class="secondary" disabled>上传采样</button><p id="imu-upload-status" class="small" aria-live="polite"></p><label for="imu-report">本机采样结果（也可长按全选复制）</label><textarea id="imu-report" readonly rows="5"></textarea></div></section>
+    <div id="imu-export" hidden><label for="imu-upload-label">这次做了哪个动作</label><select id="imu-upload-label" required><option value="">请选择这次采样的动作</option>${Object.entries(
+      imuActionLabels,
+    )
+      .map(([value, label]) => `<option value="${value}">${label}</option>`)
+      .join(
+        "",
+      )}</select><button id="imu-upload" class="secondary" disabled>上传采样</button><p id="imu-upload-status" class="small" aria-live="polite"></p><label for="imu-report">本机采样结果（也可长按全选复制）</label><textarea id="imu-report" readonly rows="5"></textarea></div></section>
   </dialog>
   <dialog id="manual"><form method="dialog"><div class="dialog-heading"><h2>手动输入目的地</h2><button aria-label="关闭手动输入" class="icon-button">×</button></div></form>
     <label for="manual-input">完整地址或 纬度, 经度</label><input id="manual-input" placeholder="例如：35.6812, 139.7671"><p class="small muted">坐标按 WGS84 纬度在前。地址补全仅在提交时请求。</p><button id="manual-submit" class="primary wide">确认输入</button>
@@ -650,6 +667,8 @@ function onFix(value: DeviceFix) {
   }
 }
 async function stopNavigation(close: boolean) {
+  if (zoomRedraw) clearTimeout(zoomRedraw);
+  zoomRedraw = undefined;
   if (close) await imuProbe?.stop();
   if (tick) clearInterval(tick);
   tick = undefined;
@@ -657,7 +676,27 @@ async function stopNavigation(close: boolean) {
   await device.stopLocation();
   if (close) await device.close();
 }
-async function handleAction(action: "PAUSE" | "RESUME" | "END") {
+async function handleAction(action: DeviceAction) {
+  if (action === "ZOOM_IN" || action === "ZOOM_OUT") {
+    if (
+      pageSuspended ||
+      imuBlocksNavigation() ||
+      !["NAVIGATING", "ARRIVED"].includes(session.snapshot.phase)
+    )
+      return;
+    if (!map.adjustZoom(action === "ZOOM_IN" ? 1 : -1)) return;
+    if (zoomRedraw) clearTimeout(zoomRedraw);
+    zoomRedraw = setTimeout(() => {
+      zoomRedraw = undefined;
+      if (
+        !pageSuspended &&
+        !imuBlocksNavigation() &&
+        ["NAVIGATING", "ARRIVED"].includes(session.snapshot.phase)
+      )
+        void drawMap();
+    }, 200);
+    return;
+  }
   if (action === "RESUME" && imuBlocksNavigation()) return;
   try {
     if (action === "END") {
@@ -736,6 +775,9 @@ async function drawMap() {
   renderRoutePreview();
   try {
     const bearing = currentMovementBearing();
+    const glassesMap =
+      device.connected && ["NAVIGATING", "ARRIVED"].includes(state.phase);
+    map.setSize(glassesMap ? 576 : 288, glassesMap ? 192 : 144);
     await map.draw(
       center,
       destination,
@@ -774,6 +816,7 @@ async function drawMap() {
         version,
         pixels,
         icon: { key: icon, pixels: iconPixels },
+        guidance: guidanceView(state, mode),
         instruction: instruction(state),
         status: hudStatus(state, mode),
         attribution: map.attribution,
@@ -996,13 +1039,17 @@ function renderImu() {
     active ||
     state?.status !== "stopped" ||
     !state.samples.length ||
+    !imuUploadLabel ||
     imuUploadBusy ||
     authBusy ||
     !client.configured;
+  $<HTMLSelectElement>("#imu-upload-label").disabled = imuUploadBusy;
   $("#imu-upload-status").textContent =
     imuUploadMessage ||
     (client.configured
-      ? "点击上传后，可凭回执查找采样。"
+      ? imuUploadLabel
+        ? "点击上传后，可凭回执查找采样。"
+        : "请选择这次做的动作，再上传采样。"
       : "请先配对并连接个人 Worker；也可复制下方本机结果。");
   if (!state) return;
   const last = state.samples.at(-1);
@@ -1035,6 +1082,8 @@ $("#imu-start").onclick = async () => {
   imuStarting = true;
   imuSampleRevision++;
   imuUploadMessage = "";
+  imuUploadLabel = "";
+  $<HTMLSelectElement>("#imu-upload-label").value = "";
   renderImu();
   const epoch = lifecycleEpoch,
     probeEpoch = ++imuEpoch;
@@ -1064,12 +1113,21 @@ document
       (button.onclick = () =>
         imuProbe?.setPhase(button.dataset.imuPhase as ImuProbePhase)),
   );
+$("#imu-upload-label").onchange = () => {
+  const value = $<HTMLSelectElement>("#imu-upload-label").value;
+  imuUploadLabel = Object.hasOwn(imuActionLabels, value)
+    ? (value as ImuProbePhase)
+    : "";
+  imuUploadMessage = "";
+  renderImu();
+};
 $("#imu-upload").onclick = async () => {
   const state = imuProbe?.snapshot();
   if (
     imuBlocksNavigation() ||
     state?.status !== "stopped" ||
     !state.samples.length ||
+    !imuUploadLabel ||
     imuUploadBusy ||
     authBusy ||
     !client.configured
@@ -1086,6 +1144,7 @@ $("#imu-upload").onclick = async () => {
       sampleCount: number;
     }>("/v1/diagnostics/imu", {
       schemaVersion: 1,
+      label: imuUploadLabel,
       samples: state.samples.map(({ receivedAt, phase, x, y, z }) => ({
         receivedAt,
         phase,

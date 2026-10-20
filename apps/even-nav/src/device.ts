@@ -5,13 +5,16 @@ import {
   TextContainerProperty,
   MenuContainerProperty,
   MenuItemProperty,
-  TextContainerUpgrade,
   ImageRawDataUpdate,
   AppLocationAccuracy,
+  OsEventTypeList,
+  EventSourceType,
 } from "@evenrealities/even_hub_sdk";
 import { isCoordinate, NavError } from "../../../packages/contracts/src/index";
 import type { Coordinate } from "../../../packages/contracts/src/index";
 import { getEvenBridge, isEvenHost } from "./runtime";
+import { HUD_QUADRANTS, renderHud } from "./hud-renderer";
+import type { GuidanceView } from "./guidance";
 
 export interface DeviceFix {
   coordinate: Coordinate;
@@ -20,11 +23,13 @@ export interface DeviceFix {
   speedMps?: number;
   heading?: number;
 }
+export type DeviceAction = "PAUSE" | "RESUME" | "END" | "ZOOM_IN" | "ZOOM_OUT";
 export interface HudFrame {
   sequence: number;
   version: number;
   pixels: Uint8Array;
   instruction: string;
+  guidance?: GuidanceView;
   status: string;
   attribution: string;
   icon?: { key: string; pixels: Uint8Array };
@@ -99,11 +104,10 @@ export class EvenDevice {
   private locationStarting?: Promise<void>;
   private locationStopping?: Promise<void>;
   private pageCreated = false;
-  private iconKey?: string;
-  private mapPixels?: Uint8Array;
+  private quadrantPixels: Uint8Array[] = [];
   private pageStarting?: Promise<void>;
-  private textValues = new Map<number, string>();
   private version = 0;
+  private lastScrollAt = -Infinity;
   connected = false;
   source: "EVEN" | "BROWSER_DEV" | "NONE" = "NONE";
   readonly queue: LatestFrameQueue<HudFrame>;
@@ -111,7 +115,7 @@ export class EvenDevice {
   constructor(
     private onFix: (fix: DeviceFix) => void,
     private onHealth: (message: string) => void,
-    private onAction: (action: "PAUSE" | "RESUME" | "END") => void,
+    private onAction: (action: DeviceAction) => void,
   ) {
     this.queue = new LatestFrameQueue(
       async (frame) => {
@@ -119,61 +123,34 @@ export class EvenDevice {
           return;
         await this.ensurePage();
         if (frame.version !== this.version || !this.connected) return;
-        // Text and both images share one serialized queue; submission is not optical proof.
-        for (const [id, name, content] of [
-          [2, "instruction", frame.instruction],
-          [3, "status", frame.status],
-          [4, "attribution", frame.attribution],
-        ] as const) {
+        const quadrants = await renderHud(frame);
+        // One serialized queue; check generation between every native write.
+        for (const [index, tile] of HUD_QUADRANTS.entries()) {
           if (frame.version !== this.version || !this.connected) return;
-          if (this.textValues.get(id) === content) continue;
+          const pixels = quadrants[index];
+          const previous = this.quadrantPixels[index];
           if (
-            !(await this.bridge.textContainerUpgrade(
-              new TextContainerUpgrade({
-                containerID: id,
-                containerName: name,
-                content,
-                contentOffset: 0,
-                contentLength: 0,
-              }),
-            ))
+            previous?.length === pixels.length &&
+            pixels.every((value, i) => value === previous[i])
           )
-            throw new Error("G2 文字发送失败");
-          this.textValues.set(id, content);
-        }
-        if (frame.version !== this.version || !this.connected) return;
-        if (frame.icon && frame.icon.key !== this.iconKey) {
-          const iconResult = await this.bridge.updateImageRawData(
+            continue;
+          const result = await this.bridge.updateImageRawData(
             new ImageRawDataUpdate({
-              containerID: 5,
-              containerName: "maneuver",
-              imageData: Array.from(frame.icon.pixels),
+              containerID: tile.id,
+              containerName: tile.name,
+              imageData: Array.from(pixels),
             }),
           );
-          if (iconResult !== "success") throw new Error("G2 图标发送失败");
-          this.iconKey = frame.icon.key;
+          if (result !== "success")
+            throw new Error(`G2 图像发送失败 (${result})`);
+          if (frame.version !== this.version || !this.connected) return;
+          this.quadrantPixels[index] = pixels.slice();
         }
-        if (frame.version !== this.version || !this.connected) return;
-        const unchanged =
-          this.mapPixels?.length === frame.pixels.length &&
-          frame.pixels.every((value, i) => value === this.mapPixels![i]);
-        const result = unchanged
-          ? "success"
-          : await this.bridge.updateImageRawData(
-              new ImageRawDataUpdate({
-                containerID: 1,
-                containerName: "map",
-                imageData: Array.from(frame.pixels),
-              }),
-            );
         this.lastSubmission = {
           sequence: frame.sequence,
           at: Date.now(),
-          result,
+          result: "success",
         };
-        if (result !== "success")
-          throw new Error(`G2 图像发送失败 (${result})`);
-        this.mapPixels = frame.pixels.slice();
       },
       () => this.onHealth("G2 发送失败；请检查连接并重新连接。"),
     );
@@ -193,54 +170,30 @@ export class EvenDevice {
     const result = await this.bridge!.createStartUpPageContainer(
       new CreateStartUpPageContainer({
         containerTotalNum: 5,
-        imageObject: [
-          new ImageContainerProperty({
-            containerID: 1,
-            containerName: "map",
-            xPosition: 0,
-            yPosition: 0,
-            width: 288,
-            height: 144,
-          }),
-          new ImageContainerProperty({
-            containerID: 5,
-            containerName: "maneuver",
-            xPosition: 300,
-            yPosition: 0,
-            width: 48,
-            height: 48,
-          }),
-        ],
+        imageObject: HUD_QUADRANTS.map(
+          (tile) =>
+            new ImageContainerProperty({
+              containerID: tile.id,
+              containerName: tile.name,
+              xPosition: tile.x,
+              yPosition: tile.y,
+              width: 288,
+              height: 144,
+              zOrderIndex: tile.id,
+            }),
+        ),
+        // Retain one native event surface below the raster, including IMU readiness.
         textObject: [
           new TextContainerProperty({
-            containerID: 2,
-            containerName: "instruction",
-            xPosition: 360,
-            yPosition: 0,
-            width: 216,
-            height: 144,
-            content: "准备导航",
-            isEventCapture: 1,
-          }),
-          new TextContainerProperty({
-            containerID: 3,
-            containerName: "status",
-            xPosition: 300,
-            yPosition: 150,
-            width: 276,
-            height: 54,
-            content: "定位时间未知",
-            isEventCapture: 0,
-          }),
-          new TextContainerProperty({
-            containerID: 4,
-            containerName: "attribution",
+            containerID: 5,
+            containerName: "hud-events",
             xPosition: 0,
-            yPosition: 208,
+            yPosition: 0,
             width: 576,
-            height: 80,
+            height: 288,
             content: " ",
-            isEventCapture: 0,
+            isEventCapture: 1,
+            zOrderIndex: 0,
           }),
         ],
         menuObject: new MenuContainerProperty({
@@ -294,9 +247,7 @@ export class EvenDevice {
     this.unsubscribeDevice = this.bridge.onDeviceStatusChanged((status) => {
       this.connected = status.connectType === "connected";
       this.queue.invalidate();
-      this.mapPixels = undefined;
-      this.iconKey = undefined;
-      this.textValues.clear();
+      this.quadrantPixels = [];
       this.onHealth(
         this.connected ? "G2 已连接" : "G2 已断开；手机继续显示导航",
       );
@@ -306,6 +257,24 @@ export class EvenDevice {
       if (item === 1) this.onAction("PAUSE");
       if (item === 2) this.onAction("RESUME");
       if (item === 3) this.onAction("END");
+      if (item !== undefined) return;
+      if (event.sysEvent?.eventSource === EventSourceType.TOUCH_EVENT_FROM_RING)
+        return;
+      const eventType =
+        event.sysEvent?.eventType ??
+        event.textEvent?.eventType ??
+        event.listEvent?.eventType;
+      if (
+        eventType !== OsEventTypeList.SCROLL_TOP_EVENT &&
+        eventType !== OsEventTypeList.SCROLL_BOTTOM_EVENT
+      )
+        return;
+      const now = Date.now();
+      if (now - this.lastScrollAt < 250) return;
+      this.lastScrollAt = now;
+      this.onAction(
+        eventType === OsEventTypeList.SCROLL_TOP_EVENT ? "ZOOM_IN" : "ZOOM_OUT",
+      );
     });
     this.onHealth(this.connected ? "G2 已连接" : "G2 未连接；请检查蓝牙与设备");
   }
@@ -437,9 +406,7 @@ export class EvenDevice {
       await this.bridge.shutDownPageContainer(0);
     this.bridge = undefined;
     this.pageCreated = false;
-    this.iconKey = undefined;
-    this.mapPixels = undefined;
-    this.textValues.clear();
+    this.quadrantPixels = [];
     this.connected = false;
     this.source = "NONE";
   }

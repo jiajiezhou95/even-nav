@@ -39,6 +39,68 @@ const req = (path: string, body?: unknown, auth = token) =>
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+describe("Google map session display options", () => {
+  it.each([undefined, "G2"] as const)(
+    "constructs the exact upstream session for display %s and preserves tile dimensions",
+    async (display) => {
+      const dimensions = display === "G2" ? 512 : 256;
+      const session = {
+        session: "synthetic_session_token",
+        expiry: "1799999999",
+        tileWidth: dimensions,
+        tileHeight: dimensions,
+        imageFormat: "png",
+      };
+      const fetcher = vi.fn(async () => Response.json(session));
+      const worker = createWorker(fetcher);
+      const e = { ...env(), GOOGLE_API_KEY: "synthetic-map-key" };
+      const result = await worker.fetch(
+        req("/v1/maps/google/session", display ? { display } : {}),
+        e,
+      );
+      expect(result.status).toBe(200);
+      expect(await result.json()).toEqual(session);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      const [url, init] = fetcher.mock.calls[0] as unknown as [
+        URL,
+        RequestInit,
+      ];
+      expect(String(url)).toBe(
+        "https://tile.googleapis.com/v1/createSession?key=synthetic-map-key",
+      );
+      expect(init.method).toBe("POST");
+      expect(init.headers).toEqual({ "Content-Type": "application/json" });
+      expect(JSON.parse(String(init.body))).toEqual({
+        mapType: "roadmap",
+        language: "ja",
+        region: "JP",
+        imageFormat: "png",
+        styles: [{ stylers: [{ saturation: -100 }] }],
+        ...(display === "G2" ? { scale: "scaleFactor2x", highDpi: true } : {}),
+      });
+    },
+  );
+  it.each([
+    { display: "G3" },
+    { display: null },
+    { display: 2 },
+    { display: "G2", scale: "scaleFactor4x" },
+  ])(
+    "rejects invalid session options before quota or provider use: %j",
+    async (body) => {
+      const fetcher = vi.fn();
+      const e = { ...env(), GOOGLE_API_KEY: "synthetic-map-key" };
+      const result = await createWorker(fetcher).fetch(
+        req("/v1/maps/google/session", body),
+        e,
+      );
+      expect(result.status).toBe(400);
+      expect(fetcher).not.toHaveBeenCalled();
+      const usage = await createWorker(fetcher).fetch(req("/v1/usage"), e);
+      expect((await usage.json()).reservedOperations).toBe(0);
+    },
+  );
+});
 describe("quota durability and security", () => {
   it("atomically reserves cap across concurrent requests and object recreation", async () => {
     const storage = new Memory();

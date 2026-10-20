@@ -139,3 +139,15 @@ User also authorized a bounded G2 XYZ capture. Manual diagnostics use the public
 - Private Beta build 116707, 78459 bytes; downloaded package SHA256 matches `c956d7f97d479fe878e8e1294efc2851320ddf8de8468d6048ec5aad63274492`. Build and privacy scan PASS. Exact-head CI is recorded on the existing Draft PR.
 - User-only pending: update to 0.1.7, capture/stop then upload from Even App; retrieve actual report and analyze XYZ semantics. No claim of head yaw or lockscreen acceptance.
 - New HUD arrangement request is design-only until the user selects a proposal; this package keeps the existing navigation layout.
+
+### Beta 0.1.8 — layout B, magnified map, temple zoom and separate sampling reports
+
+- Implements selected B layout: two cues across the top, 48 px icons / 21 px main text, 576×192 map below, smaller readable attribution and updating status. Four serialized 288×144 image quadrants compose the 576×288 display; unchanged quadrants are not resent. Full copyright wraps rather than truncates; map failures suppress turn arrows.
+- User clarification applied: G2 uses Google scaleFactor2x/highDpi tiles, proportional projection and overlays. Default horizontal geographic span matches the former288px map, rather than exposing twice the area. The shorter aspect ratio crops vertical coverage proportionally. Phone route selection keeps its original session mode.
+- Temple scroll events adjust only map zoom, bounded -2..2; ring events excluded, gestures deduplicated/coalesced, no route request. Physical forward/back direction and optical rendering remain user-only hardware checks.
+- Manual sampling requires an explicit action label. Worker retains latest20 separate report IDs with bounded storage; legacy report migration preserves its original ID/data. Owner retrieval archives missing reports without overwriting local files.
+- Targeted Worker, compositor/device/map and browser checks passed (exact-head full CI on Draft PR is authoritative). LIVE Worker synthetic history verified two separate uploads plus preservation/readback of the pre-existing actual report; zero route/provider calls in that history check.
+- LIVE Google high-DPI map via actual NavigationMap: PASS,576×192 with attribution; public Tokyo input, one session + one viewport + two tile requests, no retries or route queries. Evidence is ignored `.local/hud-map-live-result.json`; private sensor data remains ignored.
+- Actual user XYZ samples analyzed privately. Repeated nod/tilt patterns were clear, but neither compass semantics nor reliable horizontal head yaw was established. No unsupported head-heading control added.
+- G2 optical legibility, real temple gestures and iPhone lockscreen navigation are not marked PASS by local/CI evidence.
+- Private Beta0.1.8 uploaded/promoted as build116722,80322bytes; download SHA256 matches `2821fb7b74f318746b0ae26de68b2a8ca379f9752ed1aefcaafb97b3668ced70`. Worker deployment `3fa27e2f-9163-4acf-9e2d-38eccb8e3636`. Package build/privacy119files PASS. Actual production compositor screenshot reviewed locally; optical hardware acceptance pending.

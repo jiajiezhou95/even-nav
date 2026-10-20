@@ -16,7 +16,7 @@ import {
   type Fetcher,
 } from "../../../packages/providers/src/index";
 import { resolveImport } from "./resolver";
-import { imuUploadCall, imuUploadSchema } from "./imu-upload";
+import { imuIdSchema, imuUploadCall, imuUploadSchema } from "./imu-upload";
 import { reserve, type QuotaNamespace } from "./quota";
 export { QuotaLedger } from "./quota";
 export interface Env {
@@ -115,14 +115,27 @@ export function createWorker(fetcher: Fetcher = fetch) {
             env.QUOTA,
           );
           if (
-            u.pathname === "/v1/diagnostics/imu" &&
-            ["GET", "POST"].includes(request.method)
+            (u.pathname === "/v1/diagnostics/imu" &&
+              ["GET", "POST"].includes(request.method)) ||
+            (u.pathname.startsWith("/v1/diagnostics/imu/") &&
+              request.method === "GET")
           ) {
             const data =
               request.method === "POST"
                 ? parse(imuUploadSchema, await payload(request, 1024 * 1024))
                 : undefined;
-            const stored = await imuUploadCall(identity, env.QUOTA, data);
+            const suffix = u.pathname.slice("/v1/diagnostics/imu".length);
+            const selection = suffix
+              ? suffix === "/list"
+                ? "list"
+                : parse(imuIdSchema, suffix.slice(1))
+              : undefined;
+            const stored = await imuUploadCall(
+              identity,
+              env.QUOTA,
+              data,
+              selection,
+            );
             result = json(await stored.json(), stored.status);
           } else if (
             u.pathname === "/v1/auth/pair" &&
@@ -230,7 +243,10 @@ export function createWorker(fetcher: Fetcher = fetch) {
             u.pathname === "/v1/maps/google/session" &&
             request.method === "POST"
           ) {
-            parse(z.object({}).strict(), await payload(request));
+            const display = parse(
+              z.object({ display: z.literal("G2").optional() }).strict(),
+              await payload(request),
+            ).display;
             const key = configured(env.GOOGLE_API_KEY);
             await reserve(env.QUOTA, "SESSION");
             const url = new URL("https://tile.googleapis.com/v1/createSession");
@@ -247,6 +263,9 @@ export function createWorker(fetcher: Fetcher = fetch) {
                     region: "JP",
                     imageFormat: "png",
                     styles: [{ stylers: [{ saturation: -100 }] }],
+                    ...(display === "G2"
+                      ? { scale: "scaleFactor2x", highDpi: true }
+                      : {}),
                   }),
                 },
                 fetcher,

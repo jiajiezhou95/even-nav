@@ -2,26 +2,82 @@ import { describe, it, expect, vi } from "vitest";
 import { EvenDevice, LatestFrameQueue, nativeFix } from "./device";
 import { project, unproject } from "./map";
 import { staleInstruction } from "./freshness";
+import { getEvenBridge } from "./runtime";
+import type { EvenHubEvent } from "@evenrealities/even_hub_sdk";
+
+vi.mock("./runtime", () => ({
+  isEvenHost: () => true,
+  getEvenBridge: vi.fn(),
+}));
+
+vi.mock("./hud-renderer", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./hud-renderer")>();
+  return {
+    ...actual,
+    renderHud: vi.fn(async (frame) => [
+      new TextEncoder().encode(`${frame.pixels[0]}/${frame.instruction}`),
+      new TextEncoder().encode(
+        `${frame.pixels[0]}/${frame.guidance?.next || ""}`,
+      ),
+      new TextEncoder().encode(`${frame.pixels[0]}/${frame.attribution}`),
+      new TextEncoder().encode(`${frame.pixels[0]}/${frame.status}`),
+    ]),
+  };
+});
 
 describe("official SDK boundary and display queue", () => {
-  it("fully replaces each current-step text and submits new map bytes in order", async () => {
-    const sent: {
-      containerID: number;
-      content: string;
-      contentOffset: number;
-      contentLength: number;
-    }[] = [];
-    const images: number[][] = [];
+  it("maps temple scrolls once per burst, ignores ring/IMU events, and preserves menu actions", async () => {
+    let receive!: (event: EvenHubEvent) => void;
+    const bridge = {
+      getDeviceInfo: async () => ({
+        model: "g2",
+        status: { connectType: "connected" },
+      }),
+      onDeviceStatusChanged: () => () => {},
+      onEvenHubEvent: (callback: typeof receive) => {
+        receive = callback;
+        return () => {};
+      },
+    };
+    vi.mocked(getEvenBridge).mockResolvedValue(bridge as never);
+    const action = vi.fn();
+    const device = new EvenDevice(
+      () => {},
+      () => {},
+      action,
+    );
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    try {
+      await device.connect();
+      receive({ sysEvent: { eventType: 1, eventSource: 1 } } as EvenHubEvent);
+      receive({ textEvent: { eventType: 1 } } as EvenHubEvent);
+      now.mockReturnValue(1300);
+      receive({ sysEvent: { eventType: 2, eventSource: 3 } } as EvenHubEvent);
+      now.mockReturnValue(1600);
+      receive({ sysEvent: { eventType: 1, eventSource: 2 } } as EvenHubEvent);
+      receive({ sysEvent: { eventType: 8 } } as EvenHubEvent);
+      receive({ listEvent: { eventType: 1 } } as EvenHubEvent);
+      receive({ menuItemClickEvent: { itemID: 1 } } as EvenHubEvent);
+      receive({ menuItemClickEvent: { itemID: 2 } } as EvenHubEvent);
+      receive({ menuItemClickEvent: { itemID: 3 } } as EvenHubEvent);
+      expect(action.mock.calls.map(([value]) => value)).toEqual([
+        "ZOOM_IN",
+        "ZOOM_OUT",
+        "ZOOM_IN",
+        "PAUSE",
+        "RESUME",
+        "END",
+      ]);
+    } finally {
+      now.mockRestore();
+    }
+  });
+  it("submits four bounded raster quadrants and preserves the native event/menu surface", async () => {
     const bridge = {
       createStartUpPageContainer: vi.fn(async (_value: unknown) => 0),
-      textContainerUpgrade: vi.fn(async (value) => {
-        sent.push(value);
-        return true;
-      }),
-      updateImageRawData: vi.fn(async (value) => {
-        images.push(value.imageData);
-        return "success";
-      }),
+      updateImageRawData: vi.fn(
+        async (_value: { containerID: number }) => "success",
+      ),
     };
     const device = new EvenDevice(
       () => {},
@@ -30,68 +86,70 @@ describe("official SDK boundary and display queue", () => {
     );
     Object.assign(device, { bridge, connected: true, source: "EVEN" });
     device.setVersion(1);
-    const frame = (
-      sequence: number,
-      instruction: string,
-      iconKey = "left",
-    ) => ({
-      sequence,
+    device.queue.push({
+      sequence: 1,
       version: 1,
-      instruction,
-      pixels: new Uint8Array([sequence]),
-      status: "测试定位",
+      instruction: "直行 120 米",
+      pixels: new Uint8Array([1]),
+      status: "● 更新定位中",
       attribution: "Synthetic map",
-      icon: {
-        key: iconKey,
-        pixels: new Uint8Array([iconKey === "left" ? 9 : 8]),
-      },
     });
-    device.queue.push(frame(1, "沿架空道路继续前行至下一个路口"));
     await vi.waitFor(() => expect(device.lastSubmission?.sequence).toBe(1));
-    device.queue.push(frame(2, "向左转"));
-    await vi.waitFor(() => expect(device.lastSubmission?.sequence).toBe(2));
-    device.queue.push(frame(3, "向右转", "right"));
-    await vi.waitFor(() => expect(device.lastSubmission?.sequence).toBe(3));
     expect(
-      sent
-        .filter((value) => value.containerID === 2)
-        .map((value) => value.content),
-    ).toEqual(["沿架空道路继续前行至下一个路口", "向左转", "向右转"]);
-    expect(
-      sent.every(
-        (value) => value.contentOffset === 0 && value.contentLength === 0,
-      ),
-    ).toBe(true);
-    expect(images).toEqual([[9], [1], [2], [8], [3]]);
+      bridge.updateImageRawData.mock.calls.map(([v]) => v.containerID),
+    ).toEqual([1, 2, 3, 4]);
     expect(bridge.createStartUpPageContainer.mock.calls[0][0]).toMatchObject({
       containerTotalNum: 5,
-      imageObject: expect.arrayContaining([
-        expect.objectContaining({
-          containerID: 5,
-          xPosition: 300,
+      imageObject: [
+        {
+          containerID: 1,
+          xPosition: 0,
           yPosition: 0,
-          width: 48,
-          height: 48,
-        }),
-      ]),
-      textObject: expect.arrayContaining([
-        expect.objectContaining({ containerID: 2, xPosition: 360, width: 216 }),
-        expect.objectContaining({
+          width: 288,
+          height: 144,
+          zOrderIndex: 1,
+        },
+        {
+          containerID: 2,
+          xPosition: 288,
+          yPosition: 0,
+          width: 288,
+          height: 144,
+          zOrderIndex: 2,
+        },
+        {
           containerID: 3,
-          xPosition: 300,
-          yPosition: 150,
-          width: 276,
-          height: 54,
-        }),
-        expect.objectContaining({ containerID: 4, yPosition: 208 }),
-      ]),
+          xPosition: 0,
+          yPosition: 144,
+          width: 288,
+          height: 144,
+          zOrderIndex: 3,
+        },
+        {
+          containerID: 4,
+          xPosition: 288,
+          yPosition: 144,
+          width: 288,
+          height: 144,
+          zOrderIndex: 4,
+        },
+      ],
+      textObject: [{ containerID: 5, isEventCapture: 1, zOrderIndex: 0 }],
+      menuObject: {
+        menuItems: [
+          { itemID: 1, itemName: "暂停" },
+          { itemID: 2, itemName: "继续" },
+          { itemID: 3, itemName: "结束" },
+        ],
+      },
     });
   });
-  it("blinks status without re-uploading identical map or icon bytes", async () => {
+  it("replaces changed cue or blinking status only, without reuploading unchanged quadrants", async () => {
     const bridge = {
       createStartUpPageContainer: vi.fn(async () => 0),
-      textContainerUpgrade: vi.fn(async () => true),
-      updateImageRawData: vi.fn(async () => "success"),
+      updateImageRawData: vi.fn(
+        async (_value: { containerID: number }) => "success",
+      ),
     };
     const device = new EvenDevice(
       () => {},
@@ -102,23 +160,52 @@ describe("official SDK boundary and display queue", () => {
     const frame = {
       sequence: 1,
       version: 0,
-      pixels: new Uint8Array([1, 2]),
-      icon: { key: "straight", pixels: new Uint8Array([3]) },
-      instruction: "直行\n本段剩余 80 m",
+      pixels: new Uint8Array([1]),
+      instruction: "直行 120 米",
       status: "● 更新定位中",
       attribution: "Synthetic",
     };
     device.queue.push(frame);
     await vi.waitFor(() => expect(device.lastSubmission?.sequence).toBe(1));
+    device.queue.push({ ...frame, sequence: 2, instruction: "直行 80 米" });
+    await vi.waitFor(() => expect(device.lastSubmission?.sequence).toBe(2));
     device.queue.push({
       ...frame,
-      sequence: 2,
-      pixels: new Uint8Array([1, 2]),
+      sequence: 3,
+      instruction: "直行 80 米",
       status: "  更新定位中",
     });
-    await vi.waitFor(() => expect(device.lastSubmission?.sequence).toBe(2));
+    await vi.waitFor(() => expect(device.lastSubmission?.sequence).toBe(3));
+    expect(
+      bridge.updateImageRawData.mock.calls.map(([v]) => v.containerID),
+    ).toEqual([1, 2, 3, 4, 1, 4]);
+  });
+  it("stops at the first failed quadrant and never reports a partial frame as submitted", async () => {
+    const failed = vi.fn();
+    const bridge = {
+      createStartUpPageContainer: vi.fn(async () => 0),
+      updateImageRawData: vi.fn(async (v: { containerID: number }) =>
+        v.containerID === 2 ? "error" : "success",
+      ),
+    };
+    const device = new EvenDevice(
+      () => {},
+      failed,
+      () => {},
+    );
+    Object.assign(device, { bridge, connected: true, source: "EVEN" });
+    device.queue.push({
+      sequence: 1,
+      version: 0,
+      pixels: new Uint8Array([1]),
+      instruction: "直行",
+      status: "",
+      attribution: "Synthetic",
+    });
+    await vi.waitFor(() => expect(failed).toHaveBeenCalledOnce());
     expect(bridge.updateImageRawData).toHaveBeenCalledTimes(2);
-    expect(bridge.textContainerUpgrade).toHaveBeenCalledTimes(4);
+    expect(device.lastSubmission).toBeUndefined();
+    expect(device.queue.inFlight).toBe(false);
   });
   it("requires successful startup page before exposing IMU controls, without GPS", async () => {
     const bridge = {

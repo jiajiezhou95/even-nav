@@ -1360,6 +1360,12 @@ test("IMU manual upload sends only sample fields and keeps the current page", as
   await expect(upload).toBeDisabled();
   expect(uploads).toEqual([]);
   await pairForImu(page);
+  const action = page.getByLabel("这次做了哪个动作");
+  await expect(action).toHaveValue("");
+  await expect(upload).toBeDisabled();
+  await upload.dispatchEvent("click");
+  expect(uploads).toEqual([]);
+  await action.selectOption("right");
   await expect(upload).toBeEnabled();
   const localReport = await page.locator("#imu-report").inputValue();
   await upload.click();
@@ -1369,6 +1375,7 @@ test("IMU manual upload sends only sample fields and keeps the current page", as
   expect(uploads).toEqual([
     {
       schemaVersion: 1,
+      label: "right",
       samples: [
         { receivedAt: expect.any(Number), phase: "left", x: 1, y: 2, z: 3 },
       ],
@@ -1378,6 +1385,7 @@ test("IMU manual upload sends only sample fields and keeps the current page", as
   expect(navigations).toEqual([]);
   expect(page.url()).toBe("http://127.0.0.1:5173/");
   await page.getByRole("button", { name: "开始采样", exact: true }).click();
+  await expect(action).toHaveValue("");
   await expect(page.locator("#imu-upload")).toBeDisabled();
   await expect(page.locator("#imu-upload-status")).not.toContainText("已上传");
   await page.getByRole("button", { name: "停止采样", exact: true }).click();
@@ -1411,6 +1419,7 @@ test("IMU failed upload retains samples for manual retry and blocks duplicate re
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await pairForImu(page);
   await captureImu(page);
+  await page.getByLabel("这次做了哪个动作").selectOption("left");
   const localReport = await page.locator("#imu-report").inputValue();
   const upload = page.getByRole("button", { name: "上传采样", exact: true });
   await upload.click();
@@ -1426,6 +1435,7 @@ test("IMU failed upload retains samples for manual retry and blocks duplicate re
   );
   await expect(page.locator("#imu-upload-status")).not.toContainText("private");
   await expect(page.locator("#imu-report")).toHaveValue(localReport);
+  await expect(page.getByLabel("这次做了哪个动作")).toHaveValue("left");
   expect(attempts).toBe(1);
   await upload.click();
   await expect(page.locator("#imu-upload-status")).toHaveText(
@@ -1451,14 +1461,133 @@ test("IMU late upload receipt cannot mark a newer sample as uploaded", async ({
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await pairForImu(page);
   await captureImu(page);
+  await page.getByLabel("这次做了哪个动作").selectOption("left");
   const upload = page.getByRole("button", { name: "上传采样", exact: true });
   await upload.click();
   await expect(upload).toBeDisabled();
   await captureImu(page);
   releaseUpload();
+  await expect(page.getByLabel("这次做了哪个动作")).toBeEnabled();
+  await expect(page.getByLabel("这次做了哪个动作")).toHaveValue("");
+  await expect(upload).toBeDisabled();
+  await page.getByLabel("这次做了哪个动作").selectOption("nod");
   await expect(upload).toBeEnabled();
   await expect(page.locator("#imu-upload-status")).not.toContainText("已上传");
   await expect(page.locator("#imu-upload-status")).not.toContainText(
     "12345678",
   );
+});
+
+test("SDK scroll gestures zoom the active map without rerouting and ignore non-navigation", async ({
+  page,
+}) => {
+  await page.route("**/src/runtime.ts", (route) =>
+    route.fulfill({
+      contentType: "application/javascript",
+      body: `
+        export const isEvenHost = () => Boolean(window.mockNative);
+        export const getEvenBridge = async () => window.mockBridge;
+      `,
+    }),
+  );
+  await page.reload();
+  const pngs = await page.evaluate(() =>
+    [256, 512].map((size) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = size;
+      const ctx = canvas.getContext("2d")!;
+      ctx.fillStyle = "#eee";
+      ctx.fillRect(0, 0, size, size);
+      return canvas.toDataURL("image/png").split(",")[1];
+    }),
+  );
+  const viewports: number[] = [];
+  let routeCalls = 0;
+  page.on("request", (request) => {
+    if (request.url().includes("/v1/routes/")) routeCalls++;
+  });
+  await page.route("https://worker.test/v1/maps/**", (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/session")) {
+      const size = route.request().postDataJSON()?.display === "G2" ? 512 : 256;
+      return route.fulfill({
+        json: {
+          session: `synthetic-${size}`,
+          expiry: String(Math.floor(Date.now() / 1000) + 600),
+          tileWidth: size,
+          tileHeight: size,
+        },
+      });
+    }
+    if (url.pathname.endsWith("/viewport")) {
+      viewports.push(Number(url.searchParams.get("zoom")));
+      return route.fulfill({ json: { copyright: "Synthetic zoom map" } });
+    }
+    return route.fulfill({
+      contentType: "image/png",
+      body: Buffer.from(
+        pngs[url.searchParams.get("session") === "synthetic-512" ? 1 : 0],
+        "base64",
+      ),
+    });
+  });
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await pairForImu(page);
+  await page.evaluate(() => {
+    let listener: ((event: unknown) => void) | undefined;
+    (window as any).mockNative = true;
+    (window as any).emitScroll = (eventType: number, count = 1) => {
+      for (let i = 0; i < count; i++) listener?.({ sysEvent: { eventType } });
+    };
+    (window as any).mockBridge = {
+      getDeviceInfo: async () => ({
+        model: "g2",
+        status: { connectType: "connected" },
+      }),
+      onDeviceStatusChanged: () => () => {},
+      onEvenHubEvent: (callback: (event: unknown) => void) => {
+        listener = callback;
+        return () => {
+          listener = undefined;
+        };
+      },
+      getAppLocation: async () => ({
+        latitude: 35.6812,
+        longitude: 139.7671,
+        timestamp: Date.now(),
+        accuracy: 5,
+      }),
+      onAppLocationChanged: () => () => {},
+      startAppLocationUpdates: async () => true,
+      stopAppLocationUpdates: async () => true,
+      createStartUpPageContainer: async () => 0,
+      updateImageRawData: async () => "success",
+      shutDownPageContainer: async () => true,
+    };
+  });
+  await page.getByRole("button", { name: "连接 Even App / G2" }).click();
+  await expect(page.getByText("G2 已连接", { exact: true })).toBeVisible();
+  await page.evaluate(() => (window as any).emitScroll(1, 20));
+  expect(viewports).toEqual([]);
+  await page.getByLabel("GOOGLE MAPS 分享链接").fill(link);
+  await page.getByRole("button", { name: /导入链接/ }).click();
+  await page.getByRole("button", { name: "确认目的地，查询路线" }).click();
+  await page.getByRole("button", { name: "开始导航 ↗" }).click();
+  await expect(page.locator("#map-state")).toHaveText("北向上");
+  await expect.poll(() => viewports.at(-1)).toBe(16);
+  const baselineCount = viewports.length;
+  await page.evaluate(() => (window as any).emitScroll(1, 20));
+  await expect.poll(() => viewports.at(-1)).toBe(17);
+  expect(viewports.length).toBe(baselineCount + 1);
+  expect(routeCalls).toBe(1);
+  // A pause preserves navigation and allows map inspection at a different scale.
+  await page.getByRole("button", { name: "暂停", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "导航已暂停" })).toBeVisible();
+  await page.evaluate(() => (window as any).emitScroll(2));
+  await expect.poll(() => viewports.at(-1)).toBe(16);
+  expect(routeCalls).toBe(1);
+  await page.getByRole("button", { name: "结束", exact: true }).click();
+  const endedCount = viewports.length;
+  await page.evaluate(() => (window as any).emitScroll(1));
+  expect(viewports).toHaveLength(endedCount);
 });
