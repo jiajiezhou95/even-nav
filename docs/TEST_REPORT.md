@@ -82,3 +82,17 @@ Beta 0.1.3 navigation repair (2026-10-21):
 - G2 output transforms actual tiles to a dark high-contrast grayscale image and redraws distinct route/current-position overlays. No roads are invented from edge detection. Synthetic pixel/visual checks do not establish optical readability.
 - UI/mock tests: 21 PASS, followed by three final delta checks PASS for step distance/staleness, contrast and resume. Integrated TypeScript, build and privacy scan PASS. Native map clarity, movement and step transitions remain user-only observation.
 - Private Beta 0.1.3 upload/channel/readback PASS; public channel null. Downloaded package hash matches local artifact: `aec0753f5a96c4b519bab943151c5434f07f83d62c05cfcde153d89fd142c531`, 71,589 bytes.
+
+0.1.3 user acceptance and 0.1.4 correction:
+- User confirms G2 map contrast improved, but rejects route-selection layout and compound instruction prose. Prior tests did not establish acceptance of those product behaviors.
+- User's latest requested layout is one prominent map with up to three horizontal route tabs and a concise selected-route summary, replacing vertically stacked alternatives. On successful planning, the map must enter the viewport; tab changes must preserve scroll.
+- Active guidance must use structured maneuvers and accepted position-based distance, with a concise arrow/action rather than provider prose. Compound Google instructions remain optional phone detail; they are not split into invented geographic steps.
+- Backend/provider request construction is unchanged in this correction; existing successful live route evidence is reused, not claimed as a new live run.
+
+### Beta 0.1.4 delivered (2026-10-21 JST)
+
+- PASS: 8 guidance unit tests and 23 browser UI tests, including accepted-position distance updates, next-step boundary changes, horizontal tabs, selected-route map rendering, tile reuse, map failure/retry, mobile scrolling and credential persistence. These are deterministic/synthetic checks, not G2 hardware acceptance.
+- PASS: TypeScript check, production build, package privacy scan (108 files), and package upload/download hash comparison.
+- Private Beta 0.1.4, build 116672, 73,295 bytes, SHA256 `2821a967619c483835e25cf65bfade354e8d2d95fc128315c2e64e8a73dcd77d`; public channel remains unset.
+- No Worker deployment or live provider calls for this UI-only delta. Existing provider evidence is reused.
+- Pending user hardware observation: selected map with horizontal tabs, concise G2 arrows/distance during movement and step transitions. Lock-screen acceptance remains NOT RUN.

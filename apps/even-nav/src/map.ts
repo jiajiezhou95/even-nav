@@ -48,6 +48,12 @@ export class NavigationMap {
   private viewport?: { key: string; copyright: string };
   private routePaths: { id: string; points: { x: number; y: number }[] }[] = [];
   private hudOverlay?: (ctx: CanvasRenderingContext2D) => void;
+  private previewFrame?: {
+    west: number;
+    north: number;
+    zoom: number;
+    routeIds: string[];
+  };
   attribution = "";
   ready = false;
   constructor(private client: WorkerClient) {
@@ -67,6 +73,7 @@ export class NavigationMap {
     this.displayedBase = undefined;
     this.routePaths = [];
     this.hudOverlay = undefined;
+    this.previewFrame = undefined;
     this.context.fillStyle = "#e5e9e3";
     this.context.fillRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
   }
@@ -115,6 +122,60 @@ export class NavigationMap {
         }
       }
     return selected;
+  }
+  /** Paint a candidate from the active tile image; never fetch or retain another viewport. */
+  paintRoutePreview(canvas: HTMLCanvasElement, route: Route): boolean {
+    const frame = this.previewFrame;
+    if (
+      !this.ready ||
+      !this.displayedBase ||
+      !frame?.routeIds.includes(route.id) ||
+      !route.legs.some((leg) => leg.geometry.length > 1)
+    )
+      return false;
+    canvas.width = MAP_WIDTH;
+    canvas.height = MAP_HEIGHT;
+    const ctx = canvas.getContext("2d")!;
+    ctx.drawImage(this.displayedBase.canvas, 0, 0);
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    for (const leg of route.legs) {
+      for (const [color, width] of [
+        ["#fff", 7],
+        ["#163e30", 3],
+      ] as const) {
+        ctx.beginPath();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = width;
+        ctx.setLineDash(color !== "#fff" && leg.mode === "WALK" ? [5, 3] : []);
+        leg.geometry.forEach((point, i) => {
+          const p = project(point, frame.zoom);
+          if (i === 0) ctx.moveTo(p.x - frame.west, p.y - frame.north);
+          else ctx.lineTo(p.x - frame.west, p.y - frame.north);
+        });
+        ctx.stroke();
+      }
+    }
+    ctx.setLineDash([]);
+    const points = route.legs.flatMap((leg) => leg.geometry);
+    for (const [point, end] of [
+      [points[0], false],
+      [points.at(-1), true],
+    ] as const) {
+      if (!point) continue;
+      const p = project(point, frame.zoom);
+      ctx.beginPath();
+      ctx.arc(p.x - frame.west, p.y - frame.north, 5, 0, Math.PI * 2);
+      ctx.fillStyle = end ? "#fff" : "#163e30";
+      ctx.fill();
+      ctx.strokeStyle = end ? "#163e30" : "#fff";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    return true;
+  }
+  get previewCopyright() {
+    return this.ready ? this.displayedBase?.copyright || "" : "";
   }
   async draw(
     center: Coordinate,
@@ -388,6 +449,12 @@ export class NavigationMap {
         : "道路地图、路线与位置",
     );
     this.ready = true;
+    this.previewFrame = {
+      west,
+      north,
+      zoom,
+      routeIds: visibleRoutes.map((item) => item.id),
+    };
   }
   async pixels(): Promise<Uint8Array> {
     const hud = document.createElement("canvas");
