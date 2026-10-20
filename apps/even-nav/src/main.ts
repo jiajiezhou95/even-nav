@@ -16,6 +16,7 @@ import { WorkerClient } from "./client";
 import { EvenDevice, type DeviceFix } from "./device";
 import { NavigationMap } from "./map";
 import { staleInstruction, staleThreshold } from "./freshness";
+import { createCredentialStore, DeviceCredentials } from "./credentials";
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string) =>
   document.querySelector<T>(selector)!;
@@ -56,6 +57,9 @@ const evidenceLabels = {
 const client = new WorkerClient(),
   session = new NavigationSession({ staleMs: 5000 }),
   map = new NavigationMap(client);
+const credentials = new DeviceCredentials(client, createCredentialStore());
+let authBusy = true;
+let credentialStatus = "正在检查此设备的配对状态…";
 let destination: EndpointCandidate | undefined,
   fix: DeviceFix | undefined,
   mode: Mode = "WALK";
@@ -115,9 +119,10 @@ $("#app").innerHTML = `
     <p class="muted">Google Key 保存在你自己的 Worker 中。此处只连接已打包允许的后端。</p>
     <label for="worker-origin">已绑定的 Worker 地址</label><input id="worker-origin" readonly value="${escape(client.origin)}" placeholder="尚未绑定，需配置并重新打包">
     <p class="small muted">更换域名后需重新打包，网络白名单会随构建更新。</p>
-    <label for="worker-token">Worker 访问凭据</label><input id="worker-token" type="password" autocomplete="off" placeholder="只在本次会话内存中使用">
-    <p class="small muted">不保存凭据、原始分享链接或路线到本地存储。</p>
-    <button id="connect-backend" class="primary wide">连接并检查服务</button><button id="connect-device" class="secondary wide">连接 Even App / G2</button>
+    <label for="worker-token">Worker 首次配对凭据</label><input id="worker-token" type="password" autocomplete="off" placeholder="只用于首次配对，不保存此管理员凭据">
+    <p class="small muted">${credentials.store.kind === "EVEN_APP" ? "配对后的设备凭据保存在 Even App 应用存储，下次自动连接。这不等同于硬件安全存储。" : "浏览器预览：设备凭据保存在当前网站的本地存储，仅适用于此浏览器。"} 原始分享链接和路线不持久保存。</p>
+    <p id="credential-status" class="small muted" aria-live="polite"></p>
+    <button id="connect-backend" class="primary wide">首次配对并连接</button><button id="retry-backend" class="secondary wide">重试已保存的连接</button><button id="forget-backend" class="secondary wide danger">断开并忘记此设备</button><button id="connect-device" class="secondary wide">连接 Even App / G2</button>
     <button id="browser-location" class="text-button wide">启用浏览器开发定位</button><p class="small muted">开发定位不等于 Even GPS、G2 显示或锁屏持续导航。</p>
   </dialog>
   <dialog id="manual"><form method="dialog"><div class="dialog-heading"><h2>手动输入目的地</h2><button aria-label="关闭手动输入" class="icon-button">×</button></div></form>
@@ -128,6 +133,12 @@ $("#map-host").append(map.canvas);
 function renderHealth() {
   $("#health").innerHTML =
     `<span><i class="${client.configured ? "ok" : ""}"></i>${escape(backend)}</span><span><i class="${device.connected ? "ok" : ""}"></i>${escape(health)}</span>`;
+  $("#credential-status").textContent = credentialStatus;
+  $<HTMLButtonElement>("#connect-backend").disabled =
+    authBusy || client.configured;
+  $<HTMLButtonElement>("#retry-backend").disabled =
+    authBusy || !client.configured;
+  $<HTMLButtonElement>("#forget-backend").disabled = authBusy;
 }
 function renderMessage() {
   $("#message").innerHTML = error
@@ -685,21 +696,126 @@ $("#paste").onclick = async () => {
   renderMessage();
 };
 $("#connect-backend").onclick = async () => {
+  if (authBusy || client.configured) return;
+  let ownerToken = $<HTMLInputElement>("#worker-token").value;
+  $<HTMLInputElement>("#worker-token").value = "";
+  authBusy = true;
+  error = "";
+  credentialStatus = "正在为此设备配对…";
+  renderHealth();
   try {
-    client.configure($<HTMLInputElement>("#worker-token").value);
-    $<HTMLInputElement>("#worker-token").value = "";
+    const result = await credentials.pair(ownerToken);
+    ownerToken = "";
+    backend = result.verified ? "后端已连接" : "已配对，连接待重试";
+    credentialStatus = result.saved
+      ? `设备凭据已保存，下次自动连接。有效期至 ${result.expiresAt.slice(0, 10)}。`
+      : "设备凭据保存失败；仅本次连接已确认，下次可能需要重新配对。";
+    $<HTMLDialogElement>("#settings").close();
+    notice =
+      credentialStatus +
+      (result.verified ? "" : " 网络暂不可用，可在设置中重试已保存的连接。");
+    render();
+    if (result.verified) void drawMap();
+  } catch (caught) {
+    ownerToken = "";
+    backend = "后端连接失败";
+    credentialStatus = "配对未完成，请检查首次配对凭据后重试。";
+    $<HTMLDialogElement>("#settings").close();
+    report(caught);
+  } finally {
+    authBusy = false;
+    renderHealth();
+  }
+};
+$("#retry-backend").onclick = async () => {
+  if (authBusy || !client.configured) return;
+  authBusy = true;
+  renderHealth();
+  try {
     await client.request("/v1/providers");
     backend = "后端已连接";
+    notice = "已恢复连接，无需重新输入配对凭据。";
+    error = "";
     $<HTMLDialogElement>("#settings").close();
-    notice = "后端认证通过。路线与地图服务资格以实际请求结果为准。";
     render();
     void drawMap();
   } catch (caught) {
-    backend = "后端连接失败";
-    $<HTMLDialogElement>("#settings").close();
-    report(caught);
+    if (caught instanceof NavError && caught.code === "AUTH_FAILED")
+      await invalidateCredentials();
+    else {
+      backend = "连接待重试";
+      notice = "网络暂不可用，已保留设备凭据，可稍后重试。";
+      render();
+    }
+  } finally {
+    authBusy = false;
+    renderHealth();
   }
 };
+$("#forget-backend").onclick = async () => {
+  if (authBusy) return;
+  authBusy = true;
+  renderHealth();
+  session.end();
+  void stopNavigation(false);
+  map.dispose();
+  lastMapFrame = undefined;
+  $("#map-panel").hidden = true;
+  const result = await credentials.forget();
+  backend = "未配置后端";
+  credentialStatus = result.removed
+    ? result.revoked
+      ? "此设备凭据已移除并撤销。"
+      : "本机凭据已移除；网络不可用，服务端撤销未确认。可轮换 Worker 管理员密钥使旧凭据失效。"
+    : result.revoked
+      ? "服务端凭据已撤销，但本机存储清除未确认。请检查应用存储权限。"
+      : "本次连接已断开；本机清除和服务端撤销均未确认。请检查存储权限与网络。";
+  notice = credentialStatus;
+  error = "";
+  $<HTMLDialogElement>("#settings").close();
+  authBusy = false;
+  render();
+};
+async function invalidateCredentials() {
+  backend = "设备凭据已失效";
+  session.pause();
+  void stopNavigation(false);
+  try {
+    await credentials.invalidate();
+    credentialStatus = "失效的设备凭据已移除，请重新配对。";
+  } catch {
+    credentialStatus =
+      "设备凭据已失效；本机清除未确认，请检查应用存储后重新配对。";
+  }
+  notice = credentialStatus;
+  render();
+}
+client.onAuthFailure = () => {
+  if (!authBusy) void invalidateCredentials();
+};
+async function restoreCredentials() {
+  try {
+    const result = await credentials.restore();
+    if (result === "RESTORED") {
+      backend = "后端已连接";
+      credentialStatus = "已自动恢复此设备的连接，无需再次输入配对凭据。";
+    } else if (result === "OFFLINE") {
+      backend = "连接待重试";
+      credentialStatus = "已保留设备凭据，网络暂不可用；可在设置中重试连接。";
+    } else if (result === "EXPIRED_OR_INVALID") {
+      backend = "需要重新配对";
+      credentialStatus = "设备凭据已过期、失效或后端地址改变，请重新配对。";
+      notice = credentialStatus;
+    } else credentialStatus = "首次使用请配对一次，之后自动连接。";
+  } catch {
+    backend = "配对存储不可用";
+    credentialStatus = "无法读取或清除此设备的配对存储，请检查应用存储权限。";
+    notice = credentialStatus;
+  } finally {
+    authBusy = false;
+    render();
+  }
+}
 $("#connect-device").onclick = async () => {
   try {
     await device.connect();
@@ -764,3 +880,4 @@ document.addEventListener("visibilitychange", () => {
 });
 render();
 updateMapCaption();
+void restoreCredentials();

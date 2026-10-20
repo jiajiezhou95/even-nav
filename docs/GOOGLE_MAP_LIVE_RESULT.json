@@ -1,0 +1,16 @@
+{
+  "evidence": "LIVE_PROVIDER_DEPLOYED_WORKER",
+  "at": "2026-10-20T14:55:26.685Z",
+  "results": [
+    {
+      "name": "SESSION",
+      "http": 502,
+      "status": "FAIL",
+      "error": "PROVIDER_UNAVAILABLE",
+      "diagnostic": {
+        "stage": "HTTP",
+        "httpStatus": 403
+      }
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { authenticate, pairDevice, revokeDevice } from "./auth";
 import { NavError } from "../../../packages/contracts/src/index";
 import {
   ProviderError,
@@ -31,19 +32,6 @@ const json = (value: unknown, status = 200) =>
 function configured(key: string | undefined) {
   if (!key) throw new NavError("CONFIG_MISSING", "Google BYOK 尚未配置");
   return key;
-}
-async function authenticated(request: Request, token: string | undefined) {
-  if (!token || token.length < 24)
-    throw new NavError("CONFIG_MISSING", "后端访问凭据未配置");
-  const actual = request.headers.get("Authorization") ?? "";
-  const hash = async (s: string) =>
-    new Uint8Array(
-      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)),
-    );
-  const [a, b] = await Promise.all([hash(actual), hash(`Bearer ${token}`)]);
-  let delta = 0;
-  for (let i = 0; i < a.length; i++) delta |= a[i] ^ b[i];
-  if (delta) throw new NavError("AUTH_FAILED", "后端认证失败");
 }
 async function payload(r: Request) {
   if (!r.headers.get("Content-Type")?.startsWith("application/json"))
@@ -105,10 +93,23 @@ export function createWorker(fetcher: Fetcher = fetch) {
         }
         const u = new URL(request.url);
         if (u.pathname === "/health" && request.method === "GET")
-          result = json({ status: "ok", version: "0.1.0" });
+          result = json({ status: "ok", version: "0.1.1" });
         else {
-          await authenticated(request, env.ACCESS_TOKEN);
-          if (u.pathname === "/v1/providers" && request.method === "GET")
+          const identity = await authenticate(
+            request,
+            env.ACCESS_TOKEN,
+            env.QUOTA,
+          );
+          if (u.pathname === "/v1/auth/pair" && request.method === "POST") {
+            parse(z.object({}).strict(), await payload(request));
+            result = json(await pairDevice(identity, env.QUOTA));
+          } else if (
+            u.pathname === "/v1/auth/revoke" &&
+            request.method === "POST"
+          ) {
+            parse(z.object({}).strict(), await payload(request));
+            result = json(await revokeDevice(identity, env.QUOTA));
+          } else if (u.pathname === "/v1/providers" && request.method === "GET")
             result = json({
               google: {
                 configured: !!env.GOOGLE_API_KEY,

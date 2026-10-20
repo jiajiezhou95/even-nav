@@ -4,9 +4,9 @@ Checked 2026-10-20. All adapters are original code; upstream examples were not c
 
 | Provider | Implemented | Evidence / remaining gate |
 |---|---|---|
-| Google Routes v2 computeRoutes | WALK / DRIVE, ordered coordinate intermediates, steps, maneuver, per-step geometry, distance and duration; traffic opt-in | MOCK_HTTP PASS. LIVE_PROVIDER BLOCKED: personal Google Key absent |
-| Google Map Tiles v1 | roadmap session, server-supported grayscale style, tile proxy, viewport copyright | MOCK_HTTP/security checks; LIVE_PROVIDER BLOCKED: key absent; G2 output NOT RUN |
-| Places Details New / Geocoding v3 | coordinate-only requests skipped; minimum Details mask; bounded candidate list, Google provenance | MOCK_HTTP PASS. LIVE_PROVIDER BLOCKED |
+| Google Routes v2 computeRoutes | WALK / DRIVE, ordered coordinate intermediates, steps, maneuver, per-step geometry, distance and duration; traffic opt-in | MOCK_HTTP PASS. LIVE_PROVIDER public Tokyo WALK3 candidates/DRIVE1 candidate with geometry PASS |
+| Google Map Tiles v1 | roadmap session, server-supported grayscale style, tile proxy, viewport copyright | MOCK_HTTP/security checks; LIVE_PROVIDER session/tile/viewport PASS; G2 output NOT RUN |
+| Places Details New / Geocoding v3 | coordinate-only requests skipped; minimum Details mask; bounded candidate list, Google provenance | MOCK_HTTP PASS. LIVE_PROVIDER Geocoding and Text Search PASS; Details endpoint not yet live-tested |
 | Transitous MOTIS 2 | MOTIS v2.10.2 OpenAPI; stable `/api/v6/plan`; door-to-door geometry, detailed walking/transfers, arbitrary legs, waits, stay-seated metadata, route names and agencies | MOCK_HTTP PASS. User confirms contact completed. After workerd redirect-mode repair, 10/10 public Tokyo OD returned 29 itineraries for 2026-10-21 09:00 JST; 0/1/2+ transfers observed. Two targeted name/agency checks confirm Metro, Toei, JR and private rail. Device/physical transfer acceptance remains NOT RUN |
 | Open basemap / ORS | not configured | BLOCKED; no public OSM tile server fallback, no claim of equivalent Google acceptance |
 

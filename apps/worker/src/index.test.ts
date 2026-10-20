@@ -248,3 +248,131 @@ describe("bounded resolver", () => {
     ).rejects.toMatchObject({ code: "LINK_RESOLUTION_BLOCKED" });
   });
 });
+
+describe("durable device pairing", () => {
+  it("pairs only owner and restores across Worker/Ledger restart without storing raw tokens", async () => {
+    const storage = new Memory();
+    const e = { ...env(), QUOTA: namespace(new QuotaLedger({ storage })) };
+    const pair = await createWorker().fetch(req("/v1/auth/pair", {}), e);
+    expect(pair.status).toBe(200);
+    expect(pair.headers.get("Cache-Control")).toBe("no-store");
+    const { deviceToken, expiresAt } = await pair.json();
+    expect(deviceToken).toMatch(/^even_device_[a-f0-9]{64}$/);
+    expect(Date.parse(expiresAt)).toBeGreaterThan(Date.now());
+    expect(JSON.stringify([...storage.data])).not.toContain(deviceToken);
+    expect(JSON.stringify([...storage.data])).not.toContain(token);
+    const restarted = { ...e, QUOTA: namespace(new QuotaLedger({ storage })) };
+    expect(
+      (
+        await createWorker().fetch(
+          req("/v1/providers", undefined, deviceToken),
+          restarted,
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await createWorker().fetch(
+          req("/v1/auth/pair", {}, deviceToken),
+          restarted,
+        )
+      ).status,
+    ).toBe(401);
+    expect(
+      (
+        await createWorker().fetch(
+          req("/v1/auth/revoke", {}, deviceToken),
+          restarted,
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await createWorker().fetch(
+          req("/v1/providers", undefined, deviceToken),
+          e,
+        )
+      ).status,
+    ).toBe(401);
+    expect(
+      (await createWorker().fetch(req("/v1/auth/revoke", {}), e)).status,
+    ).toBe(401);
+    expect((await createWorker().fetch(req("/v1/providers"), e)).status).toBe(
+      200,
+    );
+  });
+  it("rejects unknown, malformed, expired and owner-rotated device credentials", async () => {
+    const e = env();
+    expect(
+      (
+        await createWorker().fetch(
+          req("/v1/providers", undefined, "even_device_" + "0".repeat(64)),
+          e,
+        )
+      ).status,
+    ).toBe(401);
+    const { deviceToken } = await (
+      await createWorker().fetch(req("/v1/auth/pair", {}), e)
+    ).json();
+    expect(
+      (
+        await createWorker().fetch(
+          req("/v1/providers", undefined, deviceToken + "garbage"),
+          e,
+        )
+      ).status,
+    ).toBe(401);
+    expect(
+      (
+        await createWorker().fetch(
+          req("/v1/providers", undefined, deviceToken),
+          { ...e, ACCESS_TOKEN: "rotated-synthetic-owner-token-12345" },
+        )
+      ).status,
+    ).toBe(401);
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(Date.now() + 366 * 86400000);
+      expect(
+        (
+          await createWorker().fetch(
+            req("/v1/providers", undefined, deviceToken),
+            e,
+          )
+        ).status,
+      ).toBe(401);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("bounds concurrent pairing and does not charge provider quota", async () => {
+    const storage = new Memory(),
+      e = { ...env(), QUOTA: namespace(new QuotaLedger({ storage })) };
+    const results = await Promise.all(
+      Array.from({ length: 10 }, () =>
+        createWorker().fetch(req("/v1/auth/pair", {}), e),
+      ),
+    );
+    expect(results.filter((r) => r.status === 200)).toHaveLength(8);
+    expect(results.filter((r) => r.status === 429)).toHaveLength(2);
+    expect([...storage.data.keys()]).toEqual(["auth:devices"]);
+  });
+  it("fails closed on device storage outage and rejects unexpected pairing fields", async () => {
+    const storage = new Memory(),
+      e = { ...env(), QUOTA: namespace(new QuotaLedger({ storage })) };
+    expect(
+      (
+        await createWorker().fetch(
+          req("/v1/auth/pair", { expiresAt: "forever" }),
+          e,
+        )
+      ).status,
+    ).toBe(400);
+    storage.transaction = async () => {
+      throw new Error("secret internal detail");
+    };
+    const r = await createWorker().fetch(req("/v1/auth/pair", {}), e);
+    expect(r.status).toBe(502);
+    expect(await r.text()).not.toContain("secret internal detail");
+  });
+});

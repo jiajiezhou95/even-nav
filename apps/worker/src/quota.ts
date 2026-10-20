@@ -1,3 +1,4 @@
+import { deviceStorage } from "./auth";
 import { NavError } from "../../../packages/contracts/src/index";
 export const CAPS = {
   ROUTES_ESSENTIALS: 1000,
@@ -53,6 +54,8 @@ export class QuotaLedger {
   }
   async fetch(request: Request): Promise<Response> {
     try {
+      if (new URL(request.url).pathname.startsWith("/auth/"))
+        return await deviceStorage(request, this.state.storage);
       const caps = this.caps();
       const now = new Date(),
         month = now.toISOString().slice(0, 7);
@@ -135,12 +138,10 @@ export async function reserve(ns: QuotaNamespace | undefined, sku: Sku) {
   if (!ns) throw new NavError("CONFIG_MISSING", "持久化配额未配置");
   let r: Response;
   try {
-    r = await ns
-      .get(ns.idFromName("personal"))
-      .fetch("https://quota/reserve", {
-        method: "POST",
-        body: JSON.stringify({ sku }),
-      });
+    r = await ns.get(ns.idFromName("personal")).fetch("https://quota/reserve", {
+      method: "POST",
+      body: JSON.stringify({ sku }),
+    });
   } catch {
     throw new NavError("PROVIDER_UNAVAILABLE", "配额存储不可用，已停止新请求");
   }

@@ -9,7 +9,7 @@ npx wrangler secret put GOOGLE_API_KEY --config apps/worker/wrangler.toml
 npx wrangler secret put ACCESS_TOKEN --config apps/worker/wrangler.toml
 ```
 
-Enter secrets only at the local CLI prompts. ACCESS_TOKEN must have at least 24 characters and should be cryptographically random. Rotate it with the same command to revoke old clients. The phone holds this limited Worker token in memory, not the Google key.
+Enter secrets only at the local CLI prompts. ACCESS_TOKEN must have at least 24 characters and should be cryptographically random. Rotate it with the same command to revoke all paired devices. First pairing exchanges this owner token for an independent device token; the phone persists only that device token in app-scoped SDK storage, never the owner token or Google key.
 
 Set ALLOWED_ORIGINS to exact actual app origin(s), comma separated. CORS is additional to bearer auth. Deploy the Durable Object binding/migration together with Worker; missing quota storage fails closed. `MONTHLY_CAPS` may reduce default per-SKU caps, never raise them. Static is permanently disabled in this implementation. Configure Google Cloud API quotas/budget notifications as a second layer; notifications are not automatic billing stops. Counts reserve before request and retain failures conservatively; they are not a supplier invoice.
 

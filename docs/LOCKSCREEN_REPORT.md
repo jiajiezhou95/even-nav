@@ -1,6 +1,6 @@
 # iPhone / G2 continuous navigation
 
-Status: **NOT RUN**. No iPhone, Even App Beta installation or physical G2 was available to this implementation session. Browser UI tests and SDK submission results are not lockscreen or optical-display evidence.
+Status: **NOT RUN**. The user reports Beta 0.1.0 installed and owner tester status is Active. Physical G2 display and locked-screen operation have not been observed. Browser UI tests and SDK submission results are not lockscreen or optical-display evidence.
 
 ## Implemented slice
 
@@ -9,7 +9,7 @@ Status: **NOT RUN**. No iPhone, Even App Beta installation or physical G2 was av
 - GPS timestamps follow the official SDK reference's Unix milliseconds. Missing, out-of-range or future timestamps are not replaced by reception time. Browser Geolocation is a separately labelled development adapter.
 - Navigation progress is shared with the phone through `NavigationSession`. Single in-flight image send plus one latest pending frame, invalidated on route version changes. Native submission metadata is retained only in session memory and does not prove optical appearance.
 - The displayed basemap bitmap remains only while its exact viewport is active. Source tiles are decoded, composited, immediately closed and never cached; moving to a new viewport refetches its tiles (`cache: no-store`) and discards the previous base image. GPS overlay updates do not refetch the unchanged view or trigger routes. Expired sessions, absent copyright, missing backend or unavailable tiles are explicit failures.
-- Pause stops location updates; end clears resources and requests immediate native exit. Returning to the page checks location and route age. Restart does not restore private route/token storage.
+- Pause stops location updates; end clears resources and requests immediate native exit. Returning to the page checks location and route age. Restart does not restore private routes; version 0.1.1 restores only device authorization through app-scoped SDK storage, separately from navigation continuity.
 - No audio keepalive, fake call, screen-on substitute or browser-timer claim of lockscreen continuity.
 - Stale-location warning replaces precise turn instructions at > 3 seconds for DRIVE and > 5 seconds for WALK/TRANSIT. These software thresholds are implemented; the real p95 age targets remain untested.
 - Phone attribution uses Google's unmodified official logo; the G2 native text uses the current Tiles policy's limited-space “Google Maps” allowance, alongside viewport copyright and separately identified route sources. No claim of special Google approval is made.

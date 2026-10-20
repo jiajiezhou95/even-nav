@@ -11,6 +11,7 @@ import {
 } from "@evenrealities/even_hub_sdk";
 import { isCoordinate, NavError } from "../../../packages/contracts/src/index";
 import type { Coordinate } from "../../../packages/contracts/src/index";
+import { getEvenBridge, isEvenHost } from "./runtime";
 
 export interface DeviceFix {
   coordinate: Coordinate;
@@ -224,21 +225,12 @@ export class EvenDevice {
     }
   }
   private async connectNative() {
-    const host = window as Window & {
-      flutter_inappwebview?: { callHandler?: unknown };
-    };
-    if (!host.flutter_inappwebview?.callHandler)
+    if (!isEvenHost())
       throw new NavError(
         "DISPLAY_DISCONNECTED",
         "当前不是 Even App。可使用浏览器开发定位预览，不能验证 G2。",
       );
-    const sdk = await import("@evenrealities/even_hub_sdk");
-    this.bridge = await Promise.race([
-      sdk.waitForEvenAppBridge(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Even bridge timeout")), 8000),
-      ),
-    ]);
+    this.bridge = await getEvenBridge();
     this.source = "EVEN";
     const device = await this.bridge.getDeviceInfo();
     this.connected =

@@ -1,0 +1,9 @@
+{
+  "evidence": "LIVE_DEPLOYED_AUTH_NO_PROVIDER_CALLS",
+  "at": "2026-10-20T14:59:50.255Z",
+  "pair": 200,
+  "deviceAccess": 200,
+  "revoke": 200,
+  "revokedDenied": 401,
+  "status": "PASS"
+}

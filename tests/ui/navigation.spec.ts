@@ -4,8 +4,10 @@ const link =
   "https://www.google.com/maps/dir/?api=1&origin=34.0,135.0&destination=35.6822,139.7691&travelmode=walking";
 async function configure(page: Page) {
   await page.getByRole("button", { name: "设置", exact: true }).click();
-  await page.getByLabel("Worker 访问凭据").fill("test-session-token");
-  await page.getByRole("button", { name: "连接并检查服务" }).click();
+  await page
+    .getByLabel("Worker 首次配对凭据")
+    .fill("test-owner-token-not-persisted");
+  await page.getByRole("button", { name: "首次配对并连接" }).click();
   await expect(page.getByText("后端已连接", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByRole("button", { name: "启用浏览器开发定位" }).click();
@@ -19,6 +21,15 @@ test.beforeEach(async ({ page, context }) => {
   });
   await page.route("https://worker.test/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (path === "/v1/auth/pair")
+      return route.fulfill({
+        json: {
+          deviceToken: "synthetic-device-token-for-ui-tests",
+          expiresAt: new Date(Date.now() + 86400000).toISOString(),
+        },
+      });
+    if (path === "/v1/auth/revoke")
+      return route.fulfill({ json: { revoked: true } });
     if (path === "/v1/providers")
       return route.fulfill({ json: { google: { configured: true } } });
     if (path.includes("/maps/"))
@@ -136,7 +147,10 @@ test("actual returned route is explicitly selected and uses current GPS, with pa
       local: localStorage.length,
       session: sessionStorage.length,
     })),
-  ).toEqual({ local: 0, session: 0 });
+  ).toEqual({ local: 1, session: 0 });
+  expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain(
+    "test-owner-token-not-persisted",
+  );
   await page.getByRole("button", { name: "结束", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "本次导航已结束" }),
@@ -286,4 +300,156 @@ test("real renderer uses encoded PNG, retains only active viewport and preserves
   expect(result.stable).toBe(result.first);
   expect(result.moved).toBeGreaterThan(result.stable);
   expect(result.header).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+});
+
+const credentialKey = "even-nav.device-credential.v1";
+test("device pairing survives reload without owner entry or another pair request", async ({
+  page,
+}) => {
+  let pairCalls = 0;
+  const authorization: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().endsWith("/v1/auth/pair")) pairCalls++;
+    if (request.url().endsWith("/v1/providers"))
+      authorization.push(request.headers().authorization);
+  });
+  await configure(page);
+  await page.reload();
+  await expect(page.getByText("后端已连接", { exact: true })).toBeVisible();
+  expect(pairCalls).toBe(1);
+  expect(authorization).toEqual([
+    "Bearer synthetic-device-token-for-ui-tests",
+    "Bearer synthetic-device-token-for-ui-tests",
+  ]);
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await expect(
+    page.getByText("已自动恢复此设备的连接，无需再次输入配对凭据。"),
+  ).toBeVisible();
+  await expect(page.getByLabel("Worker 首次配对凭据")).toHaveValue("");
+});
+test("expired credentials are removed before requests and rejected credentials are not retried", async ({
+  page,
+}) => {
+  let providerCalls = 0;
+  await page.route("https://worker.test/v1/providers", (route) => {
+    providerCalls++;
+    return route.fulfill({
+      status: 401,
+      json: { error: { code: "AUTH_FAILED" } },
+    });
+  });
+  await page.evaluate(
+    (key) =>
+      localStorage.setItem(
+        key,
+        JSON.stringify({
+          version: 1,
+          origin: "https://worker.test",
+          deviceToken: "synthetic-device-token-for-ui-tests",
+          expiresAt: "2000-01-01T00:00:00Z",
+        }),
+      ),
+    credentialKey,
+  );
+  await page.reload();
+  await expect(page.getByText("需要重新配对", { exact: true })).toBeVisible();
+  expect(providerCalls).toBe(0);
+  expect(
+    await page.evaluate((key) => localStorage.getItem(key), credentialKey),
+  ).toBeNull();
+  await page.evaluate(
+    (key) =>
+      localStorage.setItem(
+        key,
+        JSON.stringify({
+          version: 1,
+          origin: "https://worker.test",
+          deviceToken: "synthetic-device-token-for-ui-tests",
+          expiresAt: new Date(Date.now() + 86400000).toISOString(),
+        }),
+      ),
+    credentialKey,
+  );
+  await page.reload();
+  await expect(page.getByText("需要重新配对", { exact: true })).toBeVisible();
+  expect(providerCalls).toBe(1);
+  expect(
+    await page.evaluate((key) => localStorage.getItem(key), credentialKey),
+  ).toBeNull();
+  await page.reload();
+  expect(providerCalls).toBe(1);
+});
+test("temporary network failure keeps the device credential for explicit retry", async ({
+  page,
+}) => {
+  await configure(page);
+  await page.route("https://worker.test/v1/providers", (route) =>
+    route.abort("internetdisconnected"),
+  );
+  await page.reload();
+  await expect(page.getByText("连接待重试", { exact: true })).toBeVisible();
+  expect(
+    await page.evaluate((key) => localStorage.getItem(key), credentialKey),
+  ).toContain("synthetic-device-token-for-ui-tests");
+  await page.unroute("https://worker.test/v1/providers");
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "重试已保存的连接" }).click();
+  await expect(page.getByText("后端已连接", { exact: true })).toBeVisible();
+});
+test("storage failure is visible and never claims persistent pairing", async ({
+  page,
+}) => {
+  await page.evaluate((key) => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (name, value) {
+      if (name === key) throw new DOMException("Blocked", "SecurityError");
+      original.call(this, name, value);
+    };
+  }, credentialKey);
+  await configure(page);
+  await expect(
+    page
+      .locator("#message")
+      .getByText("设备凭据保存失败；仅本次连接已确认，下次可能需要重新配对。"),
+  ).toBeVisible();
+  expect(
+    await page.evaluate((key) => localStorage.getItem(key), credentialKey),
+  ).toBeNull();
+});
+test("forget removes local credential and revokes only the issued device token", async ({
+  page,
+}) => {
+  await configure(page);
+  const revoked = page.waitForRequest("https://worker.test/v1/auth/revoke");
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "断开并忘记此设备" }).click();
+  expect((await revoked).headers().authorization).toBe(
+    "Bearer synthetic-device-token-for-ui-tests",
+  );
+  await expect(
+    page.locator("#message").getByText("此设备凭据已移除并撤销。"),
+  ).toBeVisible();
+  expect(
+    await page.evaluate((key) => localStorage.getItem(key), credentialKey),
+  ).toBeNull();
+  await page.reload();
+  await expect(page.getByText("未配置后端", { exact: true })).toBeVisible();
+});
+test("offline forget reports local removal separately from unconfirmed server revocation", async ({
+  page,
+}) => {
+  await configure(page);
+  await page.route("https://worker.test/v1/auth/revoke", (route) =>
+    route.abort("internetdisconnected"),
+  );
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "断开并忘记此设备" }).click();
+  await expect(
+    page
+      .locator("#message")
+      .getByText(/本机凭据已移除；网络不可用，服务端撤销未确认/),
+  ).toBeVisible();
+  expect(
+    await page.evaluate((key) => localStorage.getItem(key), credentialKey),
+  ).toBeNull();
 });

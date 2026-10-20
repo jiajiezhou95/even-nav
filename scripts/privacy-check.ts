@@ -30,6 +30,7 @@ const secretPatterns = [
   /AIza[0-9A-Za-z_-]{35}/,
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
   /gh[pousr]_[A-Za-z0-9]{30,}/,
+  /even_device_[a-f0-9]{64}/,
 ];
 const inspect = (file: string) => {
   if (!statSync(file).isFile()) {
