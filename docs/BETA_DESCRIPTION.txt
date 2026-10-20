@@ -1,0 +1,7 @@
+Even Nav 私人测试版
+
+从 Google Maps 分享链接导入目的地，经本人确认后以手机当前位置重新查询路线。支持步行、驾驶及 Transitous 公共交通，并通过 Even G2 显示地图、路线、位置和导航指示。
+
+需配置个人后端与 Google API Key。当前为开发测试版本；真实 G2 显示及 iPhone 锁屏持续导航尚未验收。仅用于本人私人 Beta，不提交公开应用商店。驾驶测试仅由乘客操作。
+
+源码与许可：https://github.com/jiajiezhou95/even-nav
