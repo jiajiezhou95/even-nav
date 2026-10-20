@@ -137,7 +137,9 @@ export async function upstream(
   try {
     const r = await fetcher(url, {
       ...init,
-      redirect: "error",
+      // workerd rejects "error"; manual plus the !ok check rejects redirects
+      // without forwarding credentials or requesting the Location target.
+      redirect: "manual",
       signal: init.signal
         ? AbortSignal.any([init.signal, AbortSignal.timeout(12000)])
         : AbortSignal.timeout(12000),

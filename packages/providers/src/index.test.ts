@@ -8,6 +8,7 @@ import {
   enrichDestination,
   enrichmentSku,
   tripSchema,
+  upstream,
   type Fetcher,
 } from "./index";
 import type { ConfirmedTripRequest } from "../../contracts/src/index";
@@ -33,6 +34,25 @@ const geometry = "??o}@o}@";
 const mock = (body: unknown) =>
   vi.fn(async () => Response.json(body)) as unknown as Fetcher;
 describe("providers", () => {
+  it.each([301, 302, 303, 307, 308])(
+    "rejects HTTP %s without following redirects",
+    async (status) => {
+      const fetcher = vi.fn<Fetcher>(
+        async () =>
+          new Response(null, {
+            status,
+            headers: { Location: "https://untrusted.example/" },
+          }),
+      );
+      await expect(
+        upstream("https://provider.example/", {}, fetcher),
+      ).rejects.toMatchObject({
+        diagnostic: { stage: "HTTP", httpStatus: status },
+      });
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(fetcher.mock.calls[0]?.[1]).toMatchObject({ redirect: "manual" });
+    },
+  );
   it("decodes geometry with arbitrary provider precision", () => {
     expect(decodePolyline(geometry)).toEqual([
       { lat: 0, lng: 0 },

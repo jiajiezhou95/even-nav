@@ -1,11 +1,28 @@
 {
   "evidence": "LIVE_PROVIDER_DEPLOYED_WORKER",
-  "at": "2026-10-20T14:16:39.356Z",
-  "status": "FAIL",
-  "http": 502,
-  "error": "PROVIDER_UNAVAILABLE",
-  "diagnostic": {
-    "stage": "TRANSPORT"
-  },
+  "at": "2026-10-20T14:36:15.493Z",
+  "status": "PASS",
+  "http": 200,
+  "routeCount": 3,
+  "legModes": [
+    [
+      "WAIT",
+      "WALK",
+      "RIDE",
+      "WALK"
+    ],
+    [
+      "WAIT",
+      "WALK",
+      "RIDE",
+      "WALK"
+    ],
+    [
+      "WAIT",
+      "WALK",
+      "RIDE",
+      "WALK"
+    ]
+  ],
   "calls": 1
 }
