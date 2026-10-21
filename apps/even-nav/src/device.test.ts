@@ -9,11 +9,12 @@ import {
 import { project, unproject } from "./map";
 import { staleInstruction } from "./freshness";
 import { getEvenBridge } from "./runtime";
-import { renderHudMenu } from "./hud-menu";
+import { renderHudMenu, renderHudMenuTile } from "./hud-menu";
 import {
   CreateStartUpPageContainer,
   RebuildPageContainer,
   validateEvenHubPageContainer,
+  evenHubEventFromJson,
   type EvenHubEvent,
   type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
@@ -42,6 +43,9 @@ vi.mock("./hud-menu", () => ({
     [0, 1, 2, 3].map((i) =>
       new TextEncoder().encode(`menu/${selected}/${message || ""}/${i}`),
     ),
+  ),
+  renderHudMenuTile: vi.fn(async (selected) =>
+    new TextEncoder().encode(`overlay/${selected}`),
   ),
 }));
 
@@ -110,6 +114,7 @@ async function menuDevice() {
     bridge,
     action,
     frame,
+    receive,
     emit: (eventType: number, ring = false) =>
       receive({
         sysEvent: { eventType, eventSource: ring ? 2 : 1 },
@@ -118,6 +123,97 @@ async function menuDevice() {
 }
 
 describe("official SDK boundary and display queue", () => {
+  it.each([
+    { type: "textEvent", jsonData: { Event_Type: 0, Container_ID: 5 } },
+    { type: "textEvent", jsonData: { Container_ID: 5 } },
+    { type: "sysEvent", jsonData: { eventSource: 1 } },
+  ])("confirms bounded SDK zero/default CLICK %j", async (raw) => {
+    const { device, action, emit, receive } = await menuDevice();
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    try {
+      emit(3);
+      now.mockReturnValue(1400);
+      receive(evenHubEventFromJson(raw));
+      receive(evenHubEventFromJson(raw));
+      await vi.waitFor(() =>
+        expect(action).toHaveBeenCalledExactlyOnceWith("VIEW_ROUTE"),
+      );
+      await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
+    } finally {
+      now.mockRestore();
+    }
+  });
+  it("ignores unidentified/unknown/ring/IMU defaults and honors explicit text CLICK over system events", async () => {
+    const { action, emit, receive } = await menuDevice();
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    try {
+      emit(3);
+      now.mockReturnValue(1400);
+      for (const raw of [
+        { type: "textEvent", jsonData: {} },
+        { type: "textEvent", jsonData: { Container_ID: 5, Event_Type: 99 } },
+        { type: "sysEvent", jsonData: { eventSource: 2 } },
+        { type: "sysEvent", jsonData: { eventSource: 1, imuData: { x: 1 } } },
+      ])
+        receive(evenHubEventFromJson(raw));
+      await new Promise((resolve) => setTimeout(resolve, 320));
+      expect(action).not.toHaveBeenCalled();
+      receive({
+        sysEvent: { eventType: 8 },
+        textEvent: { eventType: 0, containerID: 5 },
+      } as EvenHubEvent);
+      await vi.waitFor(() =>
+        expect(action).toHaveBeenCalledExactlyOnceWith("VIEW_ROUTE"),
+      );
+    } finally {
+      now.mockRestore();
+    }
+  });
+  it("sends only h1 per selection, caches navigation ticks and executes click during a slow native write", async () => {
+    const { device, bridge, action, frame, emit } = await menuDevice();
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    let release!: () => void;
+    try {
+      const before = bridge.updateImageRawData.mock.calls.length;
+      emit(3);
+      await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
+      expect(
+        bridge.updateImageRawData.mock.calls
+          .slice(before)
+          .map(([v]) => v.containerID),
+      ).toEqual([2]);
+      const renders = vi.mocked(renderHudMenuTile).mock.calls.length;
+      device.queue.push({ ...frame, sequence: 2, pixels: new Uint8Array([2]) });
+      expect(vi.mocked(renderHudMenuTile)).toHaveBeenCalledTimes(renders);
+      expect(device.queue.inFlight).toBe(false);
+      bridge.updateImageRawData.mockImplementationOnce(async () => {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return "success";
+      });
+      now.mockReturnValue(1400);
+      emit(2);
+      await vi.waitFor(() => expect(release).toBeDefined());
+      emit(0);
+      emit(0);
+      await vi.waitFor(() =>
+        expect(action).toHaveBeenCalledExactlyOnceWith("ZOOM_IN"),
+      );
+      expect(bridge.updateImageRawData.mock.calls.length).toBe(before + 2);
+      release();
+      await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
+      expect(vi.mocked(renderHud).mock.lastCall?.[0].pixels[0]).toBe(2);
+      expect(
+        bridge.updateImageRawData.mock.calls
+          .slice(before + 2)
+          .map(([v]) => v.containerID),
+      ).toEqual([1, 2, 3, 4]);
+    } finally {
+      release?.();
+      now.mockRestore();
+    }
+  });
   it("wraps over the fifth return item and closes without any navigation action", async () => {
     const { device, action, emit } = await menuDevice();
     const now = vi.spyOn(Date, "now").mockReturnValue(1000);
@@ -126,7 +222,7 @@ describe("official SDK boundary and display queue", () => {
       now.mockReturnValue(1400);
       emit(1);
       await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
-      expect(vi.mocked(renderHudMenu).mock.lastCall?.[0]).toBe(4);
+      expect(vi.mocked(renderHudMenuTile).mock.lastCall?.[0]).toBe(4);
       emit(0);
       await new Promise((resolve) => setTimeout(resolve, 320));
       expect(action).not.toHaveBeenCalled();
@@ -190,13 +286,13 @@ describe("official SDK boundary and display queue", () => {
       emit(3);
       emit(0);
       await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
-      expect(vi.mocked(renderHudMenu).mock.lastCall?.[0]).toBe(0);
+      expect(vi.mocked(renderHudMenuTile).mock.lastCall?.[0]).toBe(0);
       now.mockReturnValue(1400);
       emit(2);
       emit(2);
       device.queue.push({ ...frame, sequence: 2, pixels: new Uint8Array([2]) });
       await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
-      expect(vi.mocked(renderHudMenu).mock.lastCall?.[0]).toBe(1);
+      expect(vi.mocked(renderHudMenuTile).mock.lastCall?.[0]).toBe(1);
       expect(action).not.toHaveBeenCalled();
       emit(0);
       emit(0);
@@ -236,7 +332,7 @@ describe("official SDK boundary and display queue", () => {
       now.mockRestore();
     }
   });
-  it("restores every quadrant when a menu closes during an in-flight native write", async () => {
+  it("restores the physically changed tile when a menu closes during an in-flight native write", async () => {
     const { device, bridge, frame, emit } = await menuDevice();
     let release!: () => void;
     bridge.updateImageRawData.mockImplementationOnce(async () => {
@@ -256,10 +352,10 @@ describe("official SDK boundary and display queue", () => {
       release();
       await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
       const writes = bridge.updateImageRawData.mock.calls.slice(before);
-      expect(writes.map(([v]) => v.containerID)).toEqual([1, 1, 2, 3, 4]);
+      expect(writes.map(([v]) => v.containerID)).toEqual([2, 2]);
       expect(
         new TextDecoder().decode(new Uint8Array(writes[1][0].imageData)),
-      ).toBe("1/直行");
+      ).toBe("1/");
       expect(device.lastSubmission?.sequence).toBe(3);
     } finally {
       now.mockRestore();

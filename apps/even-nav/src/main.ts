@@ -2,7 +2,6 @@ import "./style.css";
 import {
   NavigationSession,
   parseSharedInput,
-  distanceMeters,
 } from "../../../packages/core/src/index";
 import {
   NavError,
@@ -88,11 +87,9 @@ let busy = false,
   notice = "",
   health = "G2 未连接",
   backend = "未配置后端";
-let originSelection = "current",
-  departureSelection = "";
+let departureSelection = "";
 let candidateChosen = false;
 let mapError = "",
-  mapPicking = false,
   sequence = 0,
   lastFrame = 0,
   tick: ReturnType<typeof setInterval> | undefined;
@@ -135,7 +132,6 @@ $("#app").innerHTML = `
       <div id="input-help" class="muted small">可直接长按粘贴</div>
       <button id="import" class="primary wide">导入链接 <span>↗</span></button>
     </section>
-    <nav class="fallbacks" aria-label="其他输入方式"><button id="manual-button">⌖ 输入地址 / 经纬度</button><button id="pick-button">⊕ 地图选点</button></nav>
     <div class="status-strip" id="health" aria-live="polite"></div>
     <div id="message" aria-live="polite"></div>
     <section id="workflow"></section>
@@ -177,9 +173,6 @@ $("#app").innerHTML = `
       .join(
         "",
       )}</select><button id="imu-upload" class="secondary" disabled>上传采样</button><p id="imu-upload-status" class="small" aria-live="polite"></p><label for="imu-report">本机采样结果（也可长按全选复制）</label><textarea id="imu-report" readonly rows="5"></textarea></div></section>
-  </dialog>
-  <dialog id="manual"><form method="dialog"><div class="dialog-heading"><h2>手动输入目的地</h2><button aria-label="关闭手动输入" class="icon-button">×</button></div></form>
-    <label for="manual-input">完整地址或 纬度, 经度</label><input id="manual-input" placeholder="例如：35.6812, 139.7671"><p class="small muted">坐标按 WGS84 纬度在前。地址补全仅在提交时请求。</p><button id="manual-submit" class="primary wide">确认输入</button>
   </dialog>`;
 $("#map-host").append(map.canvas);
 
@@ -311,7 +304,7 @@ function render() {
       ${candidates.some((candidate) => candidate.source === "GOOGLE_API_CONTENT") ? '<img class="provider-attribution" src="/attribution/google-maps.svg" alt="Google Maps">' : ""}
       ${state.intent.warnings.length ? `<details class="route-notes"><summary>导入备注</summary>${state.intent.warnings.map((warning) => `<p class="small muted">${escape(warning)}</p>`).join("")}</details>` : ""}
       ${state.intent.waypoints.length ? `<p class="small">途经 ${state.intent.waypoints.length} 个地点</p>` : ""}
-      <label for="origin">起点</label><select id="origin"><option value="current" ${originSelection === "current" ? "selected" : ""}>当前手机位置（默认）</option>${state.intent.originCandidate?.coordinate ? `<option value="shared" ${originSelection === "shared" ? "selected" : ""}>明确使用链接原起点</option>` : ""}</select>
+      <p class="small muted">起点：当前手机位置</p>
       <div class="mode-picker" role="group" aria-label="出行模式">${Object.entries(
         modes,
       )
@@ -376,9 +369,6 @@ function render() {
       ];
     render();
     void drawMap();
-  });
-  $("#origin")?.addEventListener("change", (event) => {
-    originSelection = (event.target as HTMLSelectElement).value;
   });
   $("#departure")?.addEventListener("change", (event) => {
     departureSelection = (event.target as HTMLInputElement).value;
@@ -462,7 +452,7 @@ function cancel() {
   notice = "操作已取消。";
   render();
 }
-async function importInput(text: string, selectedFromGoogleMap = false) {
+async function importInput(text: string) {
   const request = session.beginRequest("IMPORTING");
   busy = true;
   error = "";
@@ -475,7 +465,6 @@ async function importInput(text: string, selectedFromGoogleMap = false) {
   map.dispose();
   $("#map-panel").hidden = true;
   render();
-  originSelection = "current";
   departureSelection = "";
   try {
     await stopNavigation(false);
@@ -495,15 +484,11 @@ async function importInput(text: string, selectedFromGoogleMap = false) {
         );
       else throw caught;
     }
-    if (selectedFromGoogleMap) {
-      intent.destinationCandidates = intent.destinationCandidates.map(
-        (candidate) => ({
-          ...candidate,
-          source: "GOOGLE_API_CONTENT",
-          extractedFrom: "google-basemap-user-selection",
-        }),
+    if (intent.sourceKind === "TEXT" || intent.sourceKind === "COORDINATES")
+      throw new NavError(
+        "INVALID_INPUT",
+        "请粘贴 Google Maps 地点或路线分享链接。",
       );
-    }
     const candidates: EndpointCandidate[] = [];
     for (const candidate of intent.destinationCandidates) {
       if (request.signal.aborted) return;
@@ -522,7 +507,7 @@ async function importInput(text: string, selectedFromGoogleMap = false) {
     )
       throw new NavError(
         "DESTINATION_MISSING",
-        "未找到可确认的地点，请输入完整地址或坐标。",
+        "未找到可确认的地点，请重新分享 Google Maps 目的地链接。",
       );
     intent.destinationCandidates = candidates;
     if (
@@ -553,7 +538,6 @@ async function plan(fromGlasses = false) {
   device.setOverview(false);
   lastMapFrame = undefined;
   const intent = session.snapshot.intent!;
-  const originChoice = originSelection;
   const departure = departureSelection;
   const request = session.beginRequest("PLANNING");
   busy = true;
@@ -566,18 +550,11 @@ async function plan(fromGlasses = false) {
     if (fromGlasses) device.showMessage("正在查询路线");
     const current = await device.locate();
     if (request.signal.aborted) return;
-    const sharedOrigin = intent.originCandidate?.coordinate;
-    const origin =
-      originChoice === "shared" && sharedOrigin
-        ? sharedOrigin
-        : current.coordinate;
+    const origin = current.coordinate;
     const trip: ConfirmedTripRequest = {
       requestVersion: request.version,
       origin,
-      originPolicy:
-        originChoice === "shared" && sharedOrigin
-          ? "EXPLICIT_SHARED_ORIGIN"
-          : "CURRENT_DEVICE_LOCATION",
+      originPolicy: "CURRENT_DEVICE_LOCATION",
       destination,
       mode,
       departureTime: departure
@@ -945,23 +922,15 @@ function updateMapCaption() {
   $("#map-state").textContent = map.ready ? "北向上" : "地图暂不可用";
   $("#map-caption").textContent =
     mapError ||
-    (mapPicking
-      ? "点击地图选择目的地。选择后仍需确认路线。"
-      : session.snapshot.phase === "ROUTE_SELECTION"
-        ? "点击路线或下方卡片选择。"
-        : `实心圆：最后定位 · 空心圆：目的地${currentMovementBearing() !== undefined ? " · 箭头：行进方向" : ""}。`);
+    (session.snapshot.phase === "ROUTE_SELECTION"
+      ? "点击路线或下方卡片选择。"
+      : `实心圆：最后定位 · 空心圆：目的地${currentMovementBearing() !== undefined ? " · 箭头：行进方向" : ""}。`);
   $("#attribution").textContent = map.attribution;
   $("#google-attribution").hidden = !map.ready;
   map.canvas.hidden = !map.ready;
 }
 $("#settings-button").onclick = () =>
   $<HTMLDialogElement>("#settings").showModal();
-$("#manual-button").onclick = () => $<HTMLDialogElement>("#manual").showModal();
-$("#manual-submit").onclick = () => {
-  const value = $<HTMLInputElement>("#manual-input").value;
-  $<HTMLDialogElement>("#manual").close();
-  void importInput(value);
-};
 $("#import").onclick = () =>
   void importInput($<HTMLTextAreaElement>("#share-input").value);
 $("#share-input").addEventListener("input", () => {
@@ -1279,18 +1248,6 @@ $("#refresh-map").onclick = () => {
   map.dispose();
   void drawMap();
 };
-$("#pick-button").onclick = async () => {
-  try {
-    if (!fix) fix = await device.locate();
-    mapPicking = true;
-    notice = "请在真实道路地图上选择落点。";
-    render();
-    await drawMap();
-    $("#map-panel").scrollIntoView({ behavior: "smooth" });
-  } catch (caught) {
-    report(caught);
-  }
-};
 map.canvas.onclick = (event) => {
   if (session.snapshot.phase === "ROUTE_SELECTION") {
     const routeId = map.routeFromClick(event);
@@ -1301,17 +1258,6 @@ map.canvas.onclick = (event) => {
     }
     return;
   }
-  if (!mapPicking) return;
-  const point = map.pointFromClick(event);
-  if (!point) return;
-  const previous = destination?.coordinate;
-  void importInput(`${point.lat}, ${point.lng}`, true).then(() => {
-    mapPicking = false;
-    notice = previous
-      ? `新落点距原点 ${distance(distanceMeters(previous, point))}，请检查是否误触。`
-      : "已选择地图落点，请核对坐标。";
-    render();
-  });
 };
 window.addEventListener("pagehide", () => {
   void imuProbe?.stop();

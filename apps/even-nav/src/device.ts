@@ -1,4 +1,8 @@
-import type { AppLocation, EvenAppBridge } from "@evenrealities/even_hub_sdk";
+import type {
+  AppLocation,
+  EvenAppBridge,
+  EvenHubEvent,
+} from "@evenrealities/even_hub_sdk";
 import {
   CreateStartUpPageContainer,
   RebuildPageContainer,
@@ -21,7 +25,41 @@ import {
   renderCompatibilityMap,
 } from "./hud-renderer";
 import type { GuidanceView } from "./guidance";
-import { HUD_MENU_ITEMS, renderHudMenu, type HudRouteChoice } from "./hud-menu";
+import {
+  HUD_MENU_ITEMS,
+  renderHudMenu,
+  renderHudMenuTile,
+  type HudRouteChoice,
+} from "./hud-menu";
+
+/** PB CLICK is zero and may be omitted, but only recognized touch targets default. */
+function touchEventType(event: EvenHubEvent) {
+  const explicit =
+    event.textEvent?.eventType ??
+    event.listEvent?.eventType ??
+    event.sysEvent?.eventType;
+  if (explicit !== undefined) return explicit;
+  const raw = event.jsonData;
+  if (
+    raw &&
+    Object.keys(raw).some(
+      (key) => key.replace(/_/g, "").toLowerCase() === "eventtype",
+    )
+  )
+    return;
+  const target = event.textEvent ?? event.listEvent;
+  if (target?.containerID === 5 || target?.containerName === "hud-events")
+    return OsEventTypeList.CLICK_EVENT;
+  const sys = event.sysEvent;
+  if (
+    sys &&
+    !sys.imuData &&
+    sys.systemExitReasonCode === undefined &&
+    (sys.eventSource === EventSourceType.TOUCH_EVENT_FROM_GLASSES_R ||
+      sys.eventSource === EventSourceType.TOUCH_EVENT_FROM_GLASSES_L)
+  )
+    return OsEventTypeList.CLICK_EVENT;
+}
 
 export interface DeviceFix {
   coordinate: Coordinate;
@@ -182,10 +220,10 @@ export class LatestFrameQueue<T> {
   constructor(
     private send: (value: T) => Promise<void>,
     private failed: (error: unknown) => void,
-    private queued?: (value: T) => void,
+    private queued?: (value: T) => void | boolean,
   ) {}
   push(value: T) {
-    this.queued?.(value);
+    if (this.queued?.(value) === false) return;
     this.pending = value;
     if (!this.active) void this.drain();
   }
@@ -260,6 +298,8 @@ export class EvenDevice {
   private latestFrame?: HudFrame;
   private menuOpen = false;
   private menuSelected = 0;
+  private menuBackground?: Uint8Array;
+  private requestingPresentation = false;
   private routeChoices?: { version: number; items: HudRouteChoice[] };
   private overview = false;
   private displayMessage?: string;
@@ -288,10 +328,17 @@ export class EvenDevice {
         if (this.compatibilityLayout) {
           if (!(await this.sendCompatibilityFrame(frame))) return;
         } else {
-          let quadrants: Uint8Array[];
+          let quadrants: (Uint8Array | undefined)[];
           try {
-            quadrants =
-              this.menuOpen || this.displayMessage || this.routeChoices
+            quadrants = this.menuOpen
+              ? [
+                  undefined,
+                  await renderHudMenuTile(
+                    this.menuSelected,
+                    this.menuBackground,
+                  ),
+                ]
+              : this.displayMessage || this.routeChoices
                 ? await renderHudMenu(
                     this.menuSelected,
                     this.displayMessage,
@@ -310,6 +357,7 @@ export class EvenDevice {
             )
               return;
             const pixels = quadrants[index];
+            if (!pixels) continue;
             const previous = this.quadrantPixels[index];
             if (
               previous?.length === pixels.length &&
@@ -330,15 +378,13 @@ export class EvenDevice {
             }
             if (result !== "success")
               throw new DisplayError("IMAGE", result, tile.id);
-            if (
-              frame.version !== this.version ||
-              !this.connected ||
-              presentation !== this.presentationEpoch
-            ) {
+            if (frame.version !== this.version || !this.connected) {
               this.quadrantPixels = [];
               return;
             }
             this.quadrantPixels[index] = pixels.slice();
+            // The completed native write is physical truth even if its presentation expired.
+            if (presentation !== this.presentationEpoch) return;
           }
         }
         this.lastSubmission = {
@@ -394,6 +440,7 @@ export class EvenDevice {
           !this.routeChoices
         )
           this.latestFrame = frame;
+        if (this.menuOpen && !this.requestingPresentation) return false;
       },
     );
   }
@@ -403,18 +450,22 @@ export class EvenDevice {
   }
   private redrawPresentation() {
     this.presentationEpoch++;
-    this.quadrantPixels = [];
-    if (this.routeChoices || this.displayMessage)
-      this.queue.push({
-        sequence: 0,
-        version: this.version,
-        pixels: new Uint8Array(),
-        instruction: this.displayMessage || "请选择路线",
-        status: "",
-        attribution: "",
-      });
-    else if (this.latestFrame?.version === this.version)
-      this.queue.push(this.latestFrame);
+    this.requestingPresentation = true;
+    try {
+      if (this.routeChoices || this.displayMessage)
+        this.queue.push({
+          sequence: 0,
+          version: this.version,
+          pixels: new Uint8Array(),
+          instruction: this.displayMessage || "请选择路线",
+          status: "",
+          attribution: "",
+        });
+      else if (this.latestFrame?.version === this.version)
+        this.queue.push(this.latestFrame);
+    } finally {
+      this.requestingPresentation = false;
+    }
   }
   showRouteChoices(
     items: HudRouteChoice[],
@@ -448,7 +499,6 @@ export class EvenDevice {
     this.menuOpen = false;
     this.cancelMenuClick();
     this.presentationEpoch++;
-    this.quadrantPixels = [];
   }
   showMessage(message: string) {
     this.routeChoices = undefined;
@@ -458,7 +508,6 @@ export class EvenDevice {
     this.latestFrame = undefined;
     this.displayMessage = message;
     this.presentationEpoch++;
-    this.quadrantPixels = [];
     this.queue.push({
       sequence: 0,
       version: this.version,
@@ -471,6 +520,7 @@ export class EvenDevice {
   private resetPresentation() {
     this.routeChoices = undefined;
     this.menuOpen = false;
+    this.menuBackground = undefined;
     this.overview = false;
     this.displayMessage = undefined;
     this.latestFrame = undefined;
@@ -800,10 +850,7 @@ export class EvenDevice {
       if (item !== undefined) return;
       if (event.sysEvent?.eventSource === EventSourceType.TOUCH_EVENT_FROM_RING)
         return;
-      const eventType =
-        event.sysEvent?.eventType ??
-        event.textEvent?.eventType ??
-        event.listEvent?.eventType;
+      const eventType = touchEventType(event);
       const now = Date.now();
       if (eventType === OsEventTypeList.DOUBLE_CLICK_EVENT) {
         this.cancelMenuClick();
@@ -828,6 +875,8 @@ export class EvenDevice {
           return;
         }
         this.menuOpen = !this.menuOpen;
+        if (this.menuOpen)
+          this.menuBackground = this.quadrantPixels[1]?.slice();
         this.menuSelected = 0;
         this.redrawPresentation();
         return;

@@ -204,18 +204,6 @@ textarea:focus {
   width: 100%;
   margin-top: 18px;
 }
-.fallbacks {
-  display: flex;
-  gap: 10px;
-  justify-content: center;
-  margin: 14px 0 24px;
-}
-.fallbacks button {
-  background: transparent;
-  padding: 9px 8px;
-  color: #697b63;
-  font-size: 12px;
-}
 .status-strip {
   display: flex;
   flex-wrap: wrap;
@@ -750,7 +738,6 @@ dialog > p {
 .navigating main > h1,
 .navigating main > .intro,
 .navigating main > .import-card,
-.navigating main > .fallbacks,
 .navigating main > .explainer {
   display: none;
 }
@@ -758,7 +745,6 @@ dialog > p {
 .choosing-route main > h1,
 .choosing-route main > .intro,
 .choosing-route main > .import-card,
-.choosing-route main > .fallbacks,
 .choosing-route main > .explainer {
   display: none;
 }

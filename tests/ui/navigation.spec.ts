@@ -108,7 +108,10 @@ test("paste-first native input works without clipboard and coordinates require n
   await page.getByLabel("GOOGLE MAPS 分享链接").fill(link);
   await page.getByRole("button", { name: /导入链接/ }).click();
   await expect(page.locator(".confirmation")).toBeVisible();
-  await expect(page.getByLabel("起点")).toHaveValue("current");
+  await expect(page.locator("#origin")).toHaveCount(0);
+  await expect(
+    page.getByText("起点：当前手机位置", { exact: true }),
+  ).toBeVisible();
   await expect(page.getByText("35.682200, 139.769100")).toBeVisible();
   expect(apiCalls).toEqual([]);
   await page.screenshot({
@@ -116,7 +119,7 @@ test("paste-first native input works without clipboard and coordinates require n
     fullPage: true,
   });
 });
-test("multiple links fail visibly; manual coordinate fallback recovers", async ({
+test("multiple links fail visibly; a single Maps link recovers", async ({
   page,
 }) => {
   await page
@@ -124,9 +127,10 @@ test("multiple links fail visibly; manual coordinate fallback recovers", async (
     .fill(`${link}\nhttps://www.google.com/maps/search/?api=1&query=35,139`);
   await page.getByRole("button", { name: /导入链接/ }).click();
   await expect(page.getByRole("alert")).toContainText("多个 Maps 链接");
-  await page.getByRole("button", { name: /输入地址/ }).click();
-  await page.getByLabel("完整地址或 纬度, 经度").fill("35.7, 139.8");
-  await page.getByRole("button", { name: "确认输入" }).click();
+  await page
+    .getByLabel("GOOGLE MAPS 分享链接")
+    .fill("https://www.google.com/maps/search/?api=1&query=35.7,139.8");
+  await page.getByRole("button", { name: /导入链接/ }).click();
   await expect(page.getByText("35.700000, 139.800000")).toBeVisible();
 });
 test("actual returned route is explicitly selected and uses current GPS, with pause/resume/end", async ({
@@ -285,7 +289,9 @@ test("navigation shows arrow and changing distance with one next cue, not compou
       },
     });
   });
-  await page.getByLabel("GOOGLE MAPS 分享链接").fill("35.6812,139.7701");
+  await page
+    .getByLabel("GOOGLE MAPS 分享链接")
+    .fill("https://www.google.com/maps/search/?api=1&query=35.6812,139.7701");
   await page.getByRole("button", { name: /导入链接/ }).click();
   await page.getByRole("button", { name: "确认目的地，查询路线" }).click();
   await page.getByRole("button", { name: "开始导航 ↗" }).click();
@@ -365,13 +371,15 @@ test("new input cancels in-flight short-link resolution and old response cannot 
   await expect(
     page.getByRole("button", { name: "取消", exact: true }),
   ).toBeVisible();
-  await page.getByLabel("GOOGLE MAPS 分享链接").fill("35.9, 139.9");
+  await page
+    .getByLabel("GOOGLE MAPS 分享链接")
+    .fill("https://www.google.com/maps/search/?api=1&query=35.9,139.9");
   await page.getByRole("button", { name: /导入链接/ }).click();
   release();
   await expect(page.getByText("35.900000, 139.900000")).toBeVisible();
   await expect(page.getByText("30.000000, 130.000000")).toHaveCount(0);
 });
-test("real renderer uses encoded PNG, retains only active viewport and preserves Google map-pick provenance", async ({
+test("real renderer uses encoded PNG, retains only active viewport and preserves shared-link destination", async ({
   page,
 }) => {
   const png = await page.evaluate(() => {
@@ -410,18 +418,21 @@ test("real renderer uses encoded PNG, retains only active viewport and preserves
     });
   });
   await configure(page);
-  await page.getByRole("button", { name: /地图选点/ }).click();
+  await page.getByLabel("GOOGLE MAPS 分享链接").fill(link);
+  await page.getByRole("button", { name: /导入链接/ }).click();
   await expect(page.getByText("北向上", { exact: true })).toBeVisible();
   await expect(
     page.getByRole("img", { name: "Google Maps", exact: true }),
   ).toBeVisible();
   await page.locator("canvas").click({ position: { x: 120, y: 65 } });
   await expect(page.locator(".confirmation")).toBeVisible();
+  await expect(page.getByText("35.682200, 139.769100")).toBeVisible();
   const planned = page.waitForRequest("https://worker.test/v1/routes/road");
   await page.getByRole("button", { name: "确认目的地，查询路线" }).click();
-  expect((await planned).postDataJSON().destination.source).toBe(
-    "GOOGLE_API_CONTENT",
-  );
+  expect((await planned).postDataJSON().destination).toMatchObject({
+    source: "GOOGLE_MAPS_SHARED_LINK",
+    coordinate: { lat: 35.6822, lng: 139.7691 },
+  });
   expect(tileRequests).toBeGreaterThan(0);
   const result = await page.evaluate(async () => {
     const modulePath = "/src/map.ts";
@@ -583,7 +594,9 @@ test("cancelled enrichment cannot replace a newer destination", async ({
     page.getByRole("button", { name: "确认目的地，查询路线" }),
   ).toHaveCount(0);
   await page.getByRole("button", { name: "取消", exact: true }).click();
-  await page.getByLabel("GOOGLE MAPS 分享链接").fill("35.9, 139.9");
+  await page
+    .getByLabel("GOOGLE MAPS 分享链接")
+    .fill("https://www.google.com/maps/search/?api=1&query=35.9,139.9");
   await page.getByRole("button", { name: /导入链接/ }).click();
   release();
   await expect(page.getByText("35.900000, 139.900000")).toBeVisible();
@@ -1608,6 +1621,11 @@ test("SDK scroll gestures zoom the active map without rerouting and ignore non-n
     let lastBurstAt = -Infinity;
     const mapPath = "/src/map.ts";
     const { NavigationMap } = await import(mapPath);
+    const deviceModule = await (await fetch("/src/device.ts")).text();
+    const sdkPath = deviceModule.match(
+      /from\s+["']([^"']*even_hub_sdk[^"']*)["']/,
+    )![1];
+    const { evenHubEventFromJson } = await import(sdkPath);
     const draw = NavigationMap.prototype.draw;
     (window as any).mapViews = [];
     NavigationMap.prototype.draw = async function (...args: any[]) {
@@ -1626,7 +1644,16 @@ test("SDK scroll gestures zoom the active map without rerouting and ignore non-n
         await new Promise((resolve) =>
           setTimeout(resolve, interval - (Date.now() - lastBurstAt)),
         );
-      for (let i = 0; i < count; i++) listener?.({ sysEvent: { eventType } });
+      for (let i = 0; i < count; i++)
+        listener?.(
+          evenHubEventFromJson({
+            type: "textEvent",
+            jsonData: {
+              Container_ID: 5,
+              ...(eventType === 0 ? {} : { Event_Type: eventType }),
+            },
+          }),
+        );
       lastBurstAt = Date.now();
     };
     (window as any).mockBridge = {
@@ -1708,27 +1735,48 @@ test("SDK scroll gestures zoom the active map without rerouting and ignore non-n
   await expect
     .poll(() => page.evaluate(() => (window as any).mapViews.at(-1)))
     .toEqual([]);
+  // Menu zoom actions and return do not query or restart a route.
+  for (const [selection, expectedZoom] of [
+    [1, 17],
+    [2, 16],
+    [4, 16],
+  ]) {
+    await page.evaluate(() => (window as any).emitScroll(3));
+    for (let i = 0; i < selection; i++)
+      await page.evaluate(() => (window as any).emitScroll(2));
+    await page.evaluate(() => (window as any).emitScroll(0, 20));
+    await expect.poll(() => viewports.at(-1)).toBe(expectedZoom);
+    // Confirmation is delayed to disambiguate double taps.
+    await page.waitForTimeout(350);
+    expect(routeCalls).toBe(1);
+  }
+  await page.evaluate(() => {
+    (window as any).menuBackground = (window as any).hudImages[2].slice();
+  });
   await page.evaluate(() => (window as any).emitScroll(3));
   // Waiting for the input boundary also lets the serialized menu image finish.
   await page.evaluate(() => (window as any).emitScroll(1));
+  const beforeSelection = await page.evaluate(
+    () => (window as any).hudWriteCount,
+  );
   await page.evaluate(() => (window as any).emitScroll(1));
   const menuPng = await page.evaluate(async () => {
     const path = "/src/hud-menu.ts";
-    const { renderHudMenu } = await import(path);
-    const expected = await renderHudMenu(3);
-    // Poll until all actual writes match the selected-menu compositor output.
+    const { renderHudMenuTile } = await import(path);
+    const expected = await renderHudMenuTile(
+      3,
+      new Uint8Array((window as any).menuBackground),
+    );
+    // Poll until the single actual overlay write matches the compositor output.
     for (let attempt = 0; attempt < 100; attempt++) {
       if (
-        expected.every(
-          (bytes: Uint8Array, i: number) =>
-            JSON.stringify(Array.from(bytes)) ===
-            JSON.stringify((window as any).hudImages[i + 1]),
-        )
+        JSON.stringify(Array.from(expected)) ===
+        JSON.stringify((window as any).hudImages[2])
       )
         break;
       await new Promise((resolve) => setTimeout(resolve, 20));
       if (attempt === 99)
-        throw new Error("Menu never reached all four native containers");
+        throw new Error("Menu never reached h1 native container");
     }
     const canvas = document.createElement("canvas");
     canvas.width = 576;
@@ -1751,6 +1799,16 @@ test("SDK scroll gestures zoom the active map without rerouting and ignore non-n
   await writeFile(
     ".local/evidence/hud-menu-native.png",
     Buffer.from(menuPng, "base64"),
+  );
+  expect(await page.evaluate(() => (window as any).hudWriteCount)).toBe(
+    beforeSelection + 1,
+  );
+  console.log(
+    "MENU_SELECTION_TRANSPORT",
+    await page.evaluate(() => ({
+      writes: 1,
+      bytes: (window as any).hudImages[2].length,
+    })),
   );
   expect(routeCalls).toBe(1);
   await page.evaluate(() => (window as any).emitScroll(0, 20));

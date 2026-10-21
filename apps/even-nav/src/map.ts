@@ -117,20 +117,6 @@ export class NavigationMap {
     this.session = undefined;
     this.zoomOffset = 0;
   }
-  pointFromClick(event: MouseEvent): Coordinate | undefined {
-    if (!this.ready || !this.center) return;
-    const rect = this.canvas.getBoundingClientRect();
-    const center = this.project(this.center, this.zoom);
-    return this.unproject(
-      center.x +
-        ((event.clientX - rect.left) / rect.width) * this.width -
-        this.width / 2,
-      center.y +
-        ((event.clientY - rect.top) / rect.height) * this.height -
-        this.height / 2,
-      this.zoom,
-    );
-  }
   routeFromClick(event: MouseEvent): string | undefined {
     if (!this.ready) return;
     const rect = this.canvas.getBoundingClientRect();

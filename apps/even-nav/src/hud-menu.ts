@@ -13,6 +13,44 @@ export interface HudRouteChoice {
   summary: string;
 }
 
+/** Only h1 changes: keep the rest of the last navigation presentation visible. */
+export async function renderHudMenuTile(
+  selected: number,
+  background?: Uint8Array,
+) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 288;
+  canvas.height = 144;
+  const ctx = canvas.getContext("2d")!;
+  if (background) {
+    const bitmap = await createImageBitmap(
+      new Blob([new Uint8Array(background)], { type: "image/png" }),
+    );
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close();
+  }
+  ctx.fillStyle = "#000";
+  ctx.fillRect(108, 0, 180, 144);
+  ctx.strokeStyle = "#fff";
+  ctx.strokeRect(108.5, 0.5, 179, 143);
+  ctx.fillStyle = "#fff";
+  ctx.textBaseline = "middle";
+  ctx.font = '20px "Microsoft YaHei", "PingFang SC", sans-serif';
+  HUD_MENU_ITEMS.forEach((item, index) => {
+    const y = 20 + index * 26;
+    if (index === selected) ctx.fillText("›", 119, y);
+    ctx.fillText(item.label, 138, y);
+  });
+  const blob = await new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob(
+      (value) =>
+        value ? resolve(value) : reject(new Error("Menu PNG encoding failed")),
+      "image/png",
+    ),
+  );
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
 /** Draw into the existing four image containers; never rebuild the native page. */
 export async function renderHudMenu(
   selected: number,
