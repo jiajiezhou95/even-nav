@@ -351,7 +351,11 @@ export function hudStatus(
   if (state.phase === "ARRIVED") return `${total}\n已到达`;
   if (state.phase !== "NAVIGATING") return `${total}\n预计到达 --:--`;
   const arrival = `预计到达 ${clockText(estimatedArrival(state, mode, now))}`;
-  return guidanceView(state, mode, now).stale || state.locationStale
-    ? `${total}\n${arrival} ${Math.floor(now / 1000) % 2 ? "●" : " "} 更新定位中`
-    : `${total}\n${arrival}`;
+  const status =
+    guidanceView(state, mode, now).stale || state.locationStale
+      ? `${total}\n${arrival} ${Math.floor(now / 1000) % 2 ? "●" : " "} 更新定位中`
+      : `${total}\n${arrival}`;
+  return state.transitPrompt
+    ? `${status}\n${state.transitPrompt.message} · 双击菜单`
+    : status;
 }

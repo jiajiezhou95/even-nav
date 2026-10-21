@@ -6,6 +6,7 @@ import {
   type EndpointCandidate,
   type Route,
   type RouteLeg,
+  type RouteStop,
 } from "../../contracts/src/index";
 export type Fetcher = typeof fetch;
 const walkingActions: Record<string, string> = {
@@ -355,10 +356,41 @@ const mpoly = z.object({
   points: z.string(),
   precision: z.number().int().min(0).max(7),
 });
+const optionalPlaceText = z.string().trim().min(1).optional().catch(undefined);
+const optionalPlaceTime = z
+  .string()
+  .datetime({ offset: true })
+  .optional()
+  .catch(undefined);
 const place = z.object({
-  name: z.string().optional(),
-  track: z.string().optional(),
+  name: optionalPlaceText,
+  track: optionalPlaceText,
+  scheduledTrack: optionalPlaceText,
+  lat: z.number().finite().min(-90).max(90).optional().catch(undefined),
+  lon: z.number().finite().min(-180).max(180).optional().catch(undefined),
+  arrival: optionalPlaceTime,
+  departure: optionalPlaceTime,
+  scheduledArrival: optionalPlaceTime,
+  scheduledDeparture: optionalPlaceTime,
+  cancelled: z.boolean().optional().catch(undefined),
 });
+function routeStop(p: z.infer<typeof place>): RouteStop | undefined {
+  const stop: RouteStop = {
+    name: p.name,
+    coordinate:
+      p.lat !== undefined && p.lon !== undefined
+        ? { lat: p.lat, lng: p.lon }
+        : undefined,
+    platform: p.track,
+    scheduledPlatform: p.scheduledTrack,
+    arrivalTime: p.arrival,
+    departureTime: p.departure,
+    scheduledArrivalTime: p.scheduledArrival,
+    scheduledDepartureTime: p.scheduledDeparture,
+    cancelled: p.cancelled,
+  };
+  return Object.values(stop).some((v) => v !== undefined) ? stop : undefined;
+}
 const mleg = z.object({
   mode: z.string(),
   startTime: z.string().datetime({ offset: true }),
@@ -367,6 +399,10 @@ const mleg = z.object({
   distance: z.number().nonnegative().optional(),
   from: place,
   to: place,
+  intermediateStops: z
+    .array(place.optional().catch(undefined))
+    .optional()
+    .catch(undefined),
   legGeometry: mpoly,
   steps: z
     .array(
@@ -533,6 +569,14 @@ export async function transitRoutes(
         from: l.from.name,
         to: l.to.name,
         platform: l.from.track,
+        fromStop: routeStop(l.from),
+        toStop: routeStop(l.to),
+        intermediateStops: walking
+          ? undefined
+          : l.intermediateStops?.flatMap((p) => {
+              const stop = p && routeStop(p);
+              return stop ? [stop] : [];
+            }),
         realtime: l.realTime,
         staySeated: l.interlineWithPreviousLeg,
         steps,

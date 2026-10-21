@@ -23,7 +23,11 @@ import {
   availableTransitAction,
   type TransitAction,
 } from "../../../packages/core/src/navigation";
-import { routeOverviewSteps } from "./route-overview";
+import {
+  routeOverviewSteps,
+  isTransitOverview,
+  transitLegOverview,
+} from "./route-overview";
 import { staleThreshold } from "./freshness";
 import { createCredentialStore, DeviceCredentials } from "./credentials";
 import {
@@ -218,6 +222,21 @@ function instruction(state = session.snapshot) {
   return conciseInstruction(state, mode);
 }
 function itinerary(route: Route) {
+  if (isTransitOverview(route))
+    return (
+      route.legs
+        .map(
+          (leg, index) =>
+            `<li><span class="leg-mode">${index + 1}</span><div>${transitLegOverview(
+              leg,
+            )
+              .split("\n")
+              .map((line) => `<span>${escape(line)}</span>`)
+              .join("")}</div></li>`,
+        )
+        .join("") +
+      '<li class="small muted">未列出的站台与出入口信息未由路线服务提供。</li>'
+    );
   return route.legs
     .map(
       (
@@ -282,6 +301,7 @@ function render() {
     routeId: state.route?.id || "",
     version: state.version,
     legIndex: state.legIndex,
+    promptId: state.transitPrompt?.id,
   });
   document.body.classList.toggle(
     "navigating",
@@ -300,6 +320,7 @@ function render() {
         state.legIndex,
         state.paused,
         state.boarded,
+        state.transitPrompt?.id,
         mode,
         busy,
         device.source,
@@ -374,7 +395,7 @@ function render() {
       <p id="nav-replan" class="warning" ${state.replanNeeded ? "" : "hidden"}>检测到偏航、路线过期或错过发车，请重新规划。</p>
       <div class="nav-actions"><button id="pause" class="secondary">${state.paused ? "继续" : "暂停"}</button><button id="replan" class="secondary">重新规划</button><button id="end" class="secondary danger">结束</button></div>
       <p id="transit-phase-detail" ${transitPhaseDetail(state) ? "" : "hidden"}>${escape(transitPhaseDetail(state))}</p>
-      ${availableTransitAction(state) ? `<div class="transit-actions"><button data-transit="${availableTransitAction(state)}" class="secondary">${transitActionLabels[availableTransitAction(state)!]}</button></div>` : ""}
+      ${state.transitPrompt ? `<div class="transit-prompt" role="status"><p>${escape(state.transitPrompt.message)}</p><div class="transit-actions"><button data-transit="${state.transitPrompt.action}" class="secondary">${transitActionLabels[state.transitPrompt.action]}</button><button data-transit="DEFER_TRANSIT" class="secondary">暂不确认</button></div></div>` : availableTransitAction(state) ? `<details class="manual-transit"><summary>手动确认阶段</summary><button data-transit="${availableTransitAction(state)}" class="secondary">${transitActionLabels[availableTransitAction(state)!]}</button></details>` : ""}
       <details><summary>当前步骤详情</summary><p id="current-step-detail">${escape(currentStepDetail(state))}</p></details><details class="full-itinerary"><summary>查看完整行程</summary><ol class="legs">${state.route ? itinerary(state.route) : ""}</ol></details></section>`;
   }
   if (state.phase === "ENDED")
@@ -463,11 +484,15 @@ function render() {
   document.querySelectorAll<HTMLButtonElement>("[data-transit]").forEach(
     (button) =>
       (button.onclick = () =>
-        void handleAction(button.dataset.transit as TransitAction, {
-          routeId: state.route!.id,
-          version: state.version,
-          legIndex: state.legIndex,
-        })),
+        void handleAction(
+          button.dataset.transit as TransitAction | "DEFER_TRANSIT",
+          {
+            routeId: state.route!.id,
+            version: state.version,
+            legIndex: state.legIndex,
+            promptId: state.transitPrompt?.id,
+          },
+        )),
   );
 }
 function cancel() {
@@ -706,7 +731,10 @@ async function stopNavigation(close: boolean) {
   if (close) await device.close();
 }
 async function handleAction(action: DeviceAction, choice?: RouteChoiceAction) {
-  if (Object.hasOwn(transitActionLabels, action)) {
+  if (
+    Object.hasOwn(transitActionLabels, action) ||
+    action === "DEFER_TRANSIT"
+  ) {
     const state = session.snapshot;
     if (
       busy ||
@@ -716,11 +744,15 @@ async function handleAction(action: DeviceAction, choice?: RouteChoiceAction) {
       choice.version !== state.version ||
       choice.routeId !== state.route?.id ||
       choice.legIndex !== state.legIndex ||
-      action !== availableTransitAction(state)
+      (choice.promptId && choice.promptId !== state.transitPrompt?.id) ||
+      (action === "DEFER_TRANSIT"
+        ? !choice.promptId
+        : action !== availableTransitAction(state))
     )
       return;
     try {
-      session.confirmTransit(action as TransitAction);
+      if (action === "DEFER_TRANSIT") session.deferTransitPrompt();
+      else session.confirmTransit(action as TransitAction);
       lastFrame = 0;
       render();
       await drawMap();
@@ -885,6 +917,7 @@ async function drawMap() {
       current.phase === state.phase &&
       current.legIndex === state.legIndex &&
       current.boarded === state.boarded &&
+      current.transitPrompt?.id === state.transitPrompt?.id &&
       current.paused === state.paused &&
       overview === routeOverview &&
       (state.phase !== "ROUTE_SELECTION" || selectionId === selected)

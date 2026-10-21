@@ -6,6 +6,7 @@ import {
   type Route,
 } from "../../contracts/src/index";
 import { distanceMeters, geometryLength, matchGeometry } from "./geometry";
+import { inferTransitAction } from "./transit-inference";
 export interface LocationFix {
   coordinate: Coordinate;
   timestamp: number;
@@ -40,11 +41,18 @@ export interface NavigationState {
   replanNeeded: boolean;
   paused: boolean;
   boarded: boolean;
+  transitPrompt?: TransitPrompt;
 }
 export type TransitAction =
   "BOARDED" | "ALIGHTED" | "TRANSFER_COMPLETED" | "STAY_SEATED";
 
-/** Only explicit confirmation establishes transit boundaries, including through service. */
+export interface TransitPrompt {
+  id: string;
+  action: TransitAction;
+  message: string;
+}
+
+/** Manual override remains available even when automatic evidence is inconclusive. */
 export function availableTransitAction(
   state: NavigationState,
 ): TransitAction | undefined {
@@ -108,6 +116,12 @@ export class NavigationSession {
   private lastReplan = -Infinity;
   private missedDeparture = false;
   private offRouteReplanNeeded = false;
+  private transitSamples: LocationFix[] = [];
+  private clockNow = 0;
+  private stageStartedAt = 0;
+  private promptKey = "";
+  private promptCount = 0;
+  private nextPromptAt = 0;
   readonly config: NavigationConfig;
   constructor(config: Partial<NavigationConfig> = {}) {
     this.config = { ...DEFAULT_NAVIGATION_CONFIG, ...config };
@@ -120,6 +134,7 @@ export class NavigationSession {
     signal: AbortSignal;
   } {
     this.controller.abort();
+    this.resetTransitEvidence();
     this.controller = new AbortController();
     this.state = {
       ...this.state,
@@ -137,6 +152,7 @@ export class NavigationSession {
   }
   cancel(): void {
     this.controller.abort();
+    this.resetTransitEvidence();
     this.state.version++;
     this.state.phase = this.state.route
       ? "NAVIGATING"
@@ -233,6 +249,9 @@ export class NavigationSession {
     this.lastReplan = -Infinity;
     this.missedDeparture = false;
     this.offRouteReplanNeeded = false;
+    this.clockNow = now;
+    this.resetTransitEvidence();
+    this.transitSamples = fix.timestamp <= now ? [structuredClone(fix)] : [];
   }
   private validFix(fix: LocationFix, now: number): boolean {
     return (
@@ -247,9 +266,11 @@ export class NavigationSession {
     );
   }
   refreshHealth(now = Date.now()): void {
+    this.clockNow = now;
     this.state.locationStale =
       !this.state.location ||
       now - this.state.location.timestamp > this.config.staleMs;
+    if (this.state.locationStale) this.transitSamples = [];
     // Provider TTL governs preview freshness, not a journey already underway.
     if (this.state.phase === "NAVIGATING") {
       if (this.missedDeparture)
@@ -268,6 +289,7 @@ export class NavigationSession {
       if (this.state.routes.some((route) => now >= Date.parse(route.expiresAt)))
         this.state.replanNeeded = true;
     }
+    this.updateTransitPrompt(now);
   }
   updateLocation(fix: LocationFix, now = Date.now()): boolean {
     this.refreshHealth(now);
@@ -275,23 +297,77 @@ export class NavigationSession {
       this.state.phase !== "NAVIGATING" ||
       this.state.paused ||
       !this.validFix(fix, now)
-    )
+    ) {
+      this.transitSamples = [];
       return false;
+    }
     const previous = this.state.location;
     if (previous && fix.timestamp <= previous.timestamp) return false;
     const dt = previous ? (fix.timestamp - previous.timestamp) / 1000 : 0;
-    const leg = this.state.route!.legs[this.state.legIndex];
+    let leg = this.state.route!.legs[this.state.legIndex];
     const maxSpeed = leg.mode === "WALK" || leg.mode === "TRANSFER" ? 12 : 100;
     if (
       previous &&
       dt > 0 &&
       distanceMeters(previous.coordinate, fix.coordinate) > maxSpeed * dt + 100
-    )
+    ) {
+      this.transitSamples = [];
       return false;
+    }
     this.state.location = structuredClone(fix);
     this.state.locationStale = false;
-    // Train movement never proves boarding/alighting; the user explicitly confirms these boundaries.
-    if (leg.mode === "RIDE" || leg.mode === "WAIT") return true;
+    if (
+      fix.timestamp <= now &&
+      fix.accuracyMeters !== undefined &&
+      fix.accuracyMeters <= 20
+    ) {
+      this.transitSamples.push(structuredClone(fix));
+      this.transitSamples = this.transitSamples
+        .filter((sample) => sample.timestamp >= now - 60000)
+        .slice(-61);
+    } else this.transitSamples = [];
+    const inferred = inferTransitAction(this.state, this.transitSamples, now);
+    if (inferred && inferred === availableTransitAction(this.state)) {
+      this.confirmTransit(inferred);
+      leg = this.state.route!.legs[this.state.legIndex];
+    }
+    if (leg.mode === "RIDE" || leg.mode === "WAIT") {
+      if (
+        leg.mode === "RIDE" &&
+        this.state.boarded &&
+        fix.timestamp <= now &&
+        dt > 0 &&
+        (!previous ||
+          distanceMeters(previous.coordinate, fix.coordinate) / dt <= 70) &&
+        fix.accuracyMeters !== undefined &&
+        fix.accuracyMeters <= 20
+      ) {
+        const railMatch = matchGeometry(
+          fix.coordinate,
+          leg.geometry,
+          Math.max(0, this.state.progressMeters - 30),
+          this.state.progressMeters + Math.max(150, 70 * dt),
+        );
+        if (railMatch && railMatch.distanceMeters <= 25) {
+          this.state.progressMeters = Math.max(
+            this.state.progressMeters,
+            railMatch.alongMeters,
+          );
+          this.state.remainingMeters =
+            Math.max(
+              0,
+              leg.distanceMeters *
+                (1 -
+                  this.state.progressMeters /
+                    Math.max(1, geometryLength(leg.geometry))),
+            ) +
+            this.state
+              .route!.legs.slice(this.state.legIndex + 1)
+              .reduce((n, item) => n + item.distanceMeters, 0);
+        }
+      }
+      return true;
+    }
     const match = matchGeometry(
       fix.coordinate,
       leg.geometry,
@@ -338,6 +414,7 @@ export class NavigationSession {
         .reduce((n, l) => n + l.distanceMeters, 0);
     const end = leg.geometry.at(-1);
     if (
+      !inferred &&
       leg.mode !== "TRANSFER" &&
       end &&
       geometryLength(leg.geometry) - this.state.progressMeters <=
@@ -360,6 +437,9 @@ export class NavigationSession {
     );
     this.farSamples = 0;
     this.state.offRoute = false;
+    this.resetTransitEvidence();
+    if (this.state.location && this.state.location.timestamp <= this.clockNow)
+      this.transitSamples = [structuredClone(this.state.location)];
     if (this.state.legIndex >= this.state.route!.legs.length) {
       this.state.legIndex = this.state.route!.legs.length - 1;
       this.state.phase = "ARRIVED";
@@ -385,12 +465,77 @@ export class NavigationSession {
       this.missedDeparture = false;
       this.state.replanNeeded = this.offRouteReplanNeeded;
     }
+    this.resetTransitEvidence();
+    if (this.state.location && this.state.location.timestamp <= this.clockNow)
+      this.transitSamples = [structuredClone(this.state.location)];
+  }
+  private resetTransitEvidence(): void {
+    this.transitSamples = [];
+    this.stageStartedAt = this.clockNow;
+    this.promptKey = "";
+    this.promptCount = 0;
+    this.nextPromptAt = 0;
+    delete this.state.transitPrompt;
+  }
+  private updateTransitPrompt(now: number): void {
+    const action = availableTransitAction(this.state);
+    if (!action) {
+      delete this.state.transitPrompt;
+      return;
+    }
+    const key = `${this.state.version}:${this.state.legIndex}:${action}`;
+    if (this.promptKey !== key) {
+      this.promptKey = key;
+      this.promptCount = 0;
+      this.nextPromptAt = this.stageStartedAt + 60000;
+      delete this.state.transitPrompt;
+    }
+    if (
+      this.state.transitPrompt ||
+      now < this.nextPromptAt ||
+      this.promptCount >= 2
+    )
+      return;
+    const leg = this.state.route!.legs[this.state.legIndex];
+    const boundary = Date.parse(
+      (action === "BOARDED" && leg.mode === "RIDE"
+        ? leg.startTime
+        : leg.endTime) ?? "",
+    );
+    if (
+      Number.isFinite(boundary)
+        ? now < boundary
+        : now < this.stageStartedAt + 120000
+    )
+      return;
+    const messages: Record<TransitAction, string> = {
+      BOARDED: "定位不足以确认：已经上车了吗？",
+      ALIGHTED: "定位不足以确认：已经下车了吗？",
+      TRANSFER_COMPLETED: "是否已到下一班车的候车位置？",
+      STAY_SEATED: "是否已随原车进入下一段线路？",
+    };
+    this.promptCount++;
+    this.state.transitPrompt = {
+      id: `${key}:${this.promptCount}`,
+      action,
+      message: messages[action],
+    };
+  }
+  deferTransitPrompt(now = Date.now()): void {
+    if (!this.state.transitPrompt) return;
+    delete this.state.transitPrompt;
+    this.nextPromptAt = now + 120000;
   }
   pause(): void {
-    if (this.state.phase === "NAVIGATING") this.state.paused = true;
+    if (this.state.phase === "NAVIGATING") {
+      this.state.paused = true;
+      this.resetTransitEvidence();
+    }
   }
   resume(now = Date.now()): void {
     this.state.paused = false;
+    this.clockNow = now;
+    this.resetTransitEvidence();
     this.refreshHealth(now);
   }
   end(): void {
@@ -399,6 +544,7 @@ export class NavigationSession {
     this.state.phase = "ENDED";
     this.state.stepRemainingMeters = 0;
     this.state.paused = false;
+    this.resetTransitEvidence();
   }
 }
 export function replayLocations(

@@ -1,0 +1,244 @@
+{
+  "evidence": "LIVE_PROVIDER_DEPLOYED_WORKER",
+  "departureTime": "2026-10-22T09:00:00+09:00",
+  "calls": 2,
+  "plannedCalls": 2,
+  "stoppedEarly": false,
+  "results": [
+    {
+      "name": "Shinjuku–Chofu",
+      "at": "2026-10-21T04:50:17.637Z",
+      "http": 200,
+      "status": "ROUTES_RETURNED",
+      "routes": [
+        {
+          "modes": [
+            "WALK",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "京王線 Keiō Line"
+          ],
+          "agencies": [
+            "京王電鉄 Keio Corporation"
+          ],
+          "stopMetadata": [
+            {
+              "boardingCoordinate": true,
+              "alightingCoordinate": true,
+              "boardingPlatform": false,
+              "alightingPlatform": false,
+              "intermediateStops": 3,
+              "namedIntermediateStops": 3,
+              "timedIntermediateStops": 3
+            }
+          ],
+          "transfers": 0,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "elapsedDurationMatches": true,
+          "waitsOnlyBeforeTrain": true,
+          "durationSeconds": 1920
+        },
+        {
+          "modes": [
+            "WALK",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "京王線 Keiō Line"
+          ],
+          "agencies": [
+            "京王電鉄 Keio Corporation"
+          ],
+          "stopMetadata": [
+            {
+              "boardingCoordinate": true,
+              "alightingCoordinate": true,
+              "boardingPlatform": false,
+              "alightingPlatform": false,
+              "intermediateStops": 3,
+              "namedIntermediateStops": 3,
+              "timedIntermediateStops": 3
+            }
+          ],
+          "transfers": 0,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "elapsedDurationMatches": true,
+          "waitsOnlyBeforeTrain": true,
+          "durationSeconds": 2280
+        },
+        {
+          "modes": [
+            "WALK",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "京王線 Keiō Line"
+          ],
+          "agencies": [
+            "京王電鉄 Keio Corporation"
+          ],
+          "stopMetadata": [
+            {
+              "boardingCoordinate": true,
+              "alightingCoordinate": true,
+              "boardingPlatform": false,
+              "alightingPlatform": false,
+              "intermediateStops": 5,
+              "namedIntermediateStops": 5,
+              "timedIntermediateStops": 5
+            }
+          ],
+          "transfers": 0,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "elapsedDurationMatches": true,
+          "waitsOnlyBeforeTrain": true,
+          "durationSeconds": 2880
+        }
+      ]
+    },
+    {
+      "name": "Tochomae–Daimon",
+      "at": "2026-10-21T04:50:19.011Z",
+      "http": 200,
+      "status": "ROUTES_RETURNED",
+      "routes": [
+        {
+          "modes": [
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "20220041",
+            "20209811",
+            "都営浅草線 Toei Asakusa Line"
+          ],
+          "agencies": [
+            "東京メトロ",
+            "東京メトロ",
+            "都営地下鉄 Toei Subway"
+          ],
+          "stopMetadata": [
+            {
+              "boardingCoordinate": true,
+              "alightingCoordinate": true,
+              "boardingPlatform": false,
+              "alightingPlatform": false,
+              "intermediateStops": 5,
+              "namedIntermediateStops": 5,
+              "timedIntermediateStops": 5
+            },
+            {
+              "boardingCoordinate": true,
+              "alightingCoordinate": true,
+              "boardingPlatform": false,
+              "alightingPlatform": false,
+              "intermediateStops": 2,
+              "namedIntermediateStops": 2,
+              "timedIntermediateStops": 2
+            },
+            {
+              "boardingCoordinate": true,
+              "alightingCoordinate": true,
+              "boardingPlatform": false,
+              "alightingPlatform": false,
+              "intermediateStops": 0,
+              "namedIntermediateStops": 0,
+              "timedIntermediateStops": 0
+            }
+          ],
+          "transfers": 2,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "elapsedDurationMatches": true,
+          "waitsOnlyBeforeTrain": true,
+          "durationSeconds": 2160
+        },
+        {
+          "modes": [
+            "WALK",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "3200601"
+          ],
+          "agencies": [
+            "都営地下鉄"
+          ],
+          "stopMetadata": [
+            {
+              "boardingCoordinate": true,
+              "alightingCoordinate": true,
+              "boardingPlatform": false,
+              "alightingPlatform": false,
+              "intermediateStops": 8,
+              "namedIntermediateStops": 8,
+              "timedIntermediateStops": 8
+            }
+          ],
+          "transfers": 0,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "elapsedDurationMatches": true,
+          "waitsOnlyBeforeTrain": true,
+          "durationSeconds": 2400
+        },
+        {
+          "modes": [
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "20220051",
+            "都営大江戸線 Toei Ōedo Line"
+          ],
+          "agencies": [
+            "東京メトロ",
+            "都営地下鉄 Toei Subway"
+          ],
+          "stopMetadata": [
+            {
+              "boardingCoordinate": true,
+              "alightingCoordinate": true,
+              "boardingPlatform": false,
+              "alightingPlatform": false,
+              "intermediateStops": 0,
+              "namedIntermediateStops": 0,
+              "timedIntermediateStops": 0
+            },
+            {
+              "boardingCoordinate": true,
+              "alightingCoordinate": true,
+              "boardingPlatform": false,
+              "alightingPlatform": false,
+              "intermediateStops": 6,
+              "namedIntermediateStops": 6,
+              "timedIntermediateStops": 6
+            }
+          ],
+          "transfers": 1,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "elapsedDurationMatches": true,
+          "waitsOnlyBeforeTrain": true,
+          "durationSeconds": 2220
+        }
+      ]
+    }
+  ]
+}

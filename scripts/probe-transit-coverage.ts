@@ -26,11 +26,15 @@ const selected = process.argv
   ?.slice(7);
 const activeCases = selected
   ? cases.filter(([name]) => name === selected)
-  : process.argv.includes("--transit-beta")
-    ? ["Shinjuku–Chofu", "Tochomae–Daimon", "Shimokitazawa–Oshiage"].map(
-        (name) => cases.find(([candidate]) => candidate === name)!,
+  : process.argv.includes("--transit-metadata")
+    ? ["Shinjuku–Chofu", "Tochomae–Daimon"].map((name) =>
+        cases.find(([candidate]) => candidate === name)!,
       )
-    : cases;
+    : process.argv.includes("--transit-beta")
+      ? ["Shinjuku–Chofu", "Tochomae–Daimon", "Shimokitazawa–Oshiage"].map(
+          (name) => cases.find(([candidate]) => candidate === name)!,
+        )
+      : cases;
 if (!activeCases.length) throw new Error("Unknown public test case");
 console.log(
   JSON.stringify({
@@ -98,6 +102,20 @@ for (const [name, origin, destination] of activeCases) {
           modes: route.legs.map((leg) => leg.mode),
           lines: rides.map((leg) => leg.line ?? "UNAVAILABLE"),
           agencies: rides.map((leg) => leg.agency ?? "UNAVAILABLE"),
+          stopMetadata: rides.map((leg) => ({
+            boardingCoordinate: Boolean(leg.fromStop?.coordinate),
+            alightingCoordinate: Boolean(leg.toStop?.coordinate),
+            boardingPlatform: Boolean(leg.fromStop?.platform),
+            alightingPlatform: Boolean(leg.toStop?.platform),
+            intermediateStops: leg.intermediateStops?.length ?? 0,
+            namedIntermediateStops:
+              leg.intermediateStops?.filter((stop) => Boolean(stop.name))
+                .length ?? 0,
+            timedIntermediateStops:
+              leg.intermediateStops?.filter((stop) =>
+                Boolean(stop.arrivalTime || stop.departureTime),
+              ).length ?? 0,
+          })),
           transfers: Math.max(
             0,
             rides.filter((leg) => !leg.staySeated).length - 1,
@@ -146,11 +164,13 @@ for (const [name, origin, destination] of activeCases) {
   }
   results.push(result);
   writeFileSync(
-    process.argv.includes("--transit-beta")
-      ? "docs/TRANSIT_BETA_0_1_20_RESULT.json"
-      : selected
-        ? "docs/TRANSIT_IDENTITY_RESULT.json"
-        : "docs/TRANSIT_COVERAGE_RESULT.json",
+    process.argv.includes("--transit-metadata")
+      ? "docs/TRANSIT_BETA_0_1_21_RESULT.json"
+      : process.argv.includes("--transit-beta")
+        ? "docs/TRANSIT_BETA_0_1_20_RESULT.json"
+        : selected
+          ? "docs/TRANSIT_IDENTITY_RESULT.json"
+          : "docs/TRANSIT_COVERAGE_RESULT.json",
     JSON.stringify(
       {
         evidence: "LIVE_PROVIDER_DEPLOYED_WORKER",

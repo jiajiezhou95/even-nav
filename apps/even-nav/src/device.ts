@@ -87,11 +87,13 @@ export type DeviceAction =
   | "SELECT_ROUTE"
   | "START_ROUTE"
   | "EXIT_APP"
+  | "DEFER_TRANSIT"
   | TransitAction;
 export interface RouteChoiceAction {
   routeId: string;
   version: number;
   legIndex?: number;
+  promptId?: string;
 }
 export interface DisplayFailure {
   stage: "PAGE" | "RENDER" | "IMAGE" | "TEXT";
@@ -325,6 +327,9 @@ export class EvenDevice {
             label: transitActionLabels[this.transitConfirmation.action],
             action: this.transitConfirmation.action,
           },
+          ...(this.transitConfirmation.context.promptId
+            ? [{ label: "暂不确认", action: "DEFER_TRANSIT" as const }]
+            : []),
           ...HUD_MENU_ITEMS,
         ]
       : HUD_MENU_ITEMS;
@@ -1007,7 +1012,11 @@ export class EvenDevice {
             else this.redrawPresentation();
           } else {
             this.redrawPresentation();
-            if (this.transitConfirmation?.action === action)
+            if (
+              this.transitConfirmation &&
+              (this.transitConfirmation.action === action ||
+                action === "DEFER_TRANSIT")
+            )
               this.onAction(action, this.transitConfirmation.context);
             else this.onAction(action);
           }

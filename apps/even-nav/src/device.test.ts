@@ -156,6 +156,58 @@ async function menuDevice() {
 }
 
 describe("official SDK boundary and display queue", () => {
+  it("offers defer only for a current uncertainty prompt, binds its id and ignores single clicks", async () => {
+    const { device, action, emit } = await menuDevice();
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    try {
+      const context = {
+        routeId: "rail",
+        version: 0,
+        legIndex: 1,
+        promptId: "prompt-1",
+      };
+      device.setTransitAction("BOARDED", context);
+      emit(3);
+      now.mockReturnValue(1400);
+      emit(2);
+      emit(0);
+      await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
+      expect(
+        vi
+          .mocked(renderHudMenuTile)
+          .mock.lastCall?.[2]?.map((item) => item.action),
+      ).toEqual([
+        "BOARDED",
+        "DEFER_TRANSIT",
+        "VIEW_ROUTE",
+        "ZOOM_IN",
+        "ZOOM_OUT",
+        "RESELECT_ROUTE",
+        "RETURN_NAVIGATION",
+        "EXIT_APP",
+      ]);
+      expect(action).not.toHaveBeenCalled();
+      now.mockReturnValue(1800);
+      emit(3);
+      emit(3);
+      expect(action).toHaveBeenCalledExactlyOnceWith("DEFER_TRANSIT", context);
+      device.setTransitAction("BOARDED", {
+        routeId: "rail",
+        version: 0,
+        legIndex: 1,
+      });
+      now.mockReturnValue(2200);
+      emit(3);
+      await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
+      expect(
+        vi
+          .mocked(renderHudMenuTile)
+          .mock.lastCall?.[2]?.some((item) => item.action === "DEFER_TRANSIT"),
+      ).toBe(false);
+    } finally {
+      now.mockRestore();
+    }
+  });
   it("offers a token-bound transit action ahead of all static items and invalidates an open menu on phase change", async () => {
     const { device, action, emit } = await menuDevice();
     const now = vi.spyOn(Date, "now").mockReturnValue(1000);

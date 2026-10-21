@@ -181,6 +181,20 @@ describe("compact structured navigation guidance", () => {
       "总剩余 --  现在--:--\n预计到达 --:--",
     );
   });
+  it("adds an uncertainty question without replacing the approved location status", () => {
+    const state = start().snapshot;
+    state.transitPrompt = {
+      id: "prompt-1",
+      action: "BOARDED",
+      message: "已经上车了吗？",
+    };
+    expect(hudStatus(state, "TRANSIT", now + 5001)).toContain("更新定位中");
+    expect(hudStatus(state, "TRANSIT", now + 5001)).toContain(
+      "已经上车了吗？ · 双击菜单",
+    );
+    state.transitPrompt = undefined;
+    expect(hudStatus(state, "TRANSIT", now + 5001)).not.toContain("双击菜单");
+  });
   it("ignores compound multiline prose and includes only one structured upcoming maneuver", () => {
     const state = start().snapshot;
     expect(conciseInstruction(state, "WALK", now)).toMatch(

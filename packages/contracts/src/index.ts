@@ -49,6 +49,17 @@ export interface RouteStep {
   durationSeconds: number;
   maneuver?: string;
 }
+export interface RouteStop {
+  name?: string;
+  coordinate?: Coordinate;
+  platform?: string;
+  scheduledPlatform?: string;
+  arrivalTime?: string;
+  departureTime?: string;
+  scheduledArrivalTime?: string;
+  scheduledDepartureTime?: string;
+  cancelled?: boolean;
+}
 export interface RouteLeg {
   mode: "WALK" | "DRIVE" | "WAIT" | "RIDE" | "TRANSFER";
   geometry: Coordinate[];
@@ -63,6 +74,9 @@ export interface RouteLeg {
   from?: string;
   to?: string;
   platform?: string;
+  fromStop?: RouteStop;
+  toStop?: RouteStop;
+  intermediateStops?: RouteStop[];
   realtime?: boolean;
   staySeated?: boolean;
 }

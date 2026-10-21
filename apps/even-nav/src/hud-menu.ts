@@ -11,7 +11,8 @@ export const HUD_MENU_ITEMS = [
 ] as const;
 export interface HudMenuItem {
   label: string;
-  action: (typeof HUD_MENU_ITEMS)[number]["action"] | TransitAction;
+  action:
+    (typeof HUD_MENU_ITEMS)[number]["action"] | TransitAction | "DEFER_TRANSIT";
 }
 
 export interface HudRouteChoice {

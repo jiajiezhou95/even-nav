@@ -2338,7 +2338,7 @@ for (const transfers of [0, 1, 2])
       await writeFile(path, Buffer.from(image, "base64"));
     };
     const confirm = async (action: string) => {
-      await expect(page.locator(`[data-transit="${action}"]`)).toBeVisible();
+      await expect(page.locator(`[data-transit="${action}"]`)).toHaveCount(1);
       const before = await snapshot();
       if (transfers === 2 && action === "BOARDED" && before.leg === 1)
         await page.evaluate(() => (window as any).waitForTransitFrame());

@@ -412,6 +412,160 @@ describe("providers", () => {
       durationSeconds: 180,
     });
   });
+  it("retains provider stop order, endpoint coordinates, platforms and offset times", async () => {
+    const f = mock({
+      itineraries: [
+        {
+          duration: 240,
+          legs: [
+            leg("WALK", 0, 1),
+            {
+              ...leg("SUBWAY", 1, 3),
+              from: {
+                name: "Board",
+                lat: 35,
+                lon: 139,
+                track: "2",
+                scheduledTrack: "1",
+                departure: "2026-10-20T10:01:00+09:00",
+              },
+              to: {
+                name: "Alight",
+                lat: 35.01,
+                lon: 139.01,
+                track: "4",
+                arrival: "2026-10-20T10:03:00+09:00",
+              },
+              intermediateStops: [
+                {
+                  name: "First",
+                  lat: 35.002,
+                  lon: 139.002,
+                  track: "3",
+                  arrival: "2026-10-20T10:01:30+09:00",
+                  departure: "2026-10-20T10:02:00+09:00",
+                  scheduledArrival: "2026-10-20T10:01:20+09:00",
+                  scheduledDeparture: "2026-10-20T10:01:50+09:00",
+                  cancelled: false,
+                },
+                { name: "Second", lat: 35.005, lon: 139.005, cancelled: true },
+              ],
+            },
+            leg("WALK", 3, 4),
+          ],
+        },
+      ],
+    });
+    const [route] = await transitRoutes(
+      { ...trip, mode: "TRANSIT", routeProvider: "TRANSITOUS" },
+      "test",
+      f,
+    );
+    const ride = route.legs[1];
+    expect(ride.fromStop).toMatchObject({
+      name: "Board",
+      coordinate: { lat: 35, lng: 139 },
+      platform: "2",
+      scheduledPlatform: "1",
+      departureTime: "2026-10-20T10:01:00+09:00",
+    });
+    expect(ride.toStop).toMatchObject({
+      name: "Alight",
+      coordinate: { lat: 35.01, lng: 139.01 },
+      platform: "4",
+      arrivalTime: "2026-10-20T10:03:00+09:00",
+    });
+    expect(ride.intermediateStops?.map((s) => s.name)).toEqual([
+      "First",
+      "Second",
+    ]);
+    expect(ride.intermediateStops?.[0]).toMatchObject({
+      platform: "3",
+      arrivalTime: "2026-10-20T10:01:30+09:00",
+      departureTime: "2026-10-20T10:02:00+09:00",
+      scheduledArrivalTime: "2026-10-20T10:01:20+09:00",
+      scheduledDepartureTime: "2026-10-20T10:01:50+09:00",
+      cancelled: false,
+    });
+    expect(ride.intermediateStops?.[1].cancelled).toBe(true);
+    expect(ride.platform).toBe("2");
+    expect(ride).not.toHaveProperty("entrance");
+    expect(ride).not.toHaveProperty("exit");
+    expect(route.legs[0].steps[0].geometry).toEqual(decodePolyline(geometry));
+    expect(
+      new URL(String(vi.mocked(f).mock.calls[0][0])).searchParams.get(
+        "detailedLegs",
+      ),
+    ).toBe("true");
+  });
+  it.each([undefined, null, "bad", []])(
+    "tolerates absent or malformed optional intermediate stops %j",
+    async (intermediateStops) => {
+      const [route] = await transitRoutes(
+        { ...trip, mode: "TRANSIT", routeProvider: "TRANSITOUS" },
+        "test",
+        mock({
+          itineraries: [
+            {
+              duration: 240,
+              legs: [
+                leg("WALK", 0, 1),
+                { ...leg("SUBWAY", 1, 3), intermediateStops },
+                leg("WALK", 3, 4),
+              ],
+            },
+          ],
+        }),
+      );
+      expect(route.legs[1].intermediateStops).toEqual(
+        Array.isArray(intermediateStops) ? [] : undefined,
+      );
+    },
+  );
+  it("omits malformed optional metadata without dropping usable stops or routes", async () => {
+    const [route] = await transitRoutes(
+      { ...trip, mode: "TRANSIT", routeProvider: "TRANSITOUS" },
+      "test",
+      mock({
+        itineraries: [
+          {
+            duration: 240,
+            legs: [
+              leg("WALK", 0, 1),
+              {
+                ...leg("SUBWAY", 1, 3),
+                from: { name: "Board", lat: 91, lon: 139, track: 3 },
+                to: { name: "Alight", lat: 35, lon: "139" },
+                intermediateStops: [
+                  null,
+                  1,
+                  {},
+                  {
+                    name: "Valid name",
+                    lat: 35,
+                    lon: 181,
+                    arrival: "not a time",
+                    departure: "2026-10-20T10:02:00",
+                    scheduledArrival: null,
+                    cancelled: "false",
+                    track: "",
+                    exit: "4",
+                  },
+                ],
+              },
+              leg("WALK", 3, 4),
+            ],
+          },
+        ],
+      }),
+    );
+    expect(route.legs[1].fromStop?.coordinate).toBeUndefined();
+    expect(route.legs[1].toStop?.coordinate).toBeUndefined();
+    expect(route.legs[1].platform).toBeUndefined();
+    expect(JSON.parse(JSON.stringify(route.legs[1].intermediateStops))).toEqual(
+      [{ name: "Valid name" }],
+    );
+  });
   it("leaves gapped access and transfer walks reachable with waits only before boarding", async () => {
     const routes = await transitRoutes(
       { ...trip, mode: "TRANSIT", routeProvider: "TRANSITOUS" },
