@@ -185,3 +185,12 @@ User also authorized a bounded G2 XYZ capture. Manual diagnostics use the public
 - This candidate adds sanitized per-attempt page diagnostics only, preserving original arguments/results and retry bounds. It records dispatch, raw primitive type/limited value, handler-callable state and app-ID presence/type, never IDs or page content. It does not claim to fix display.
 - True native cause and hardware restoration remain WAITING_FOR_EXTERNAL_GATE. No Google/Transitous calls or Worker changes.
 - 23 targeted device tests and TypeScript PASS; build/privacy119files PASS. Private Beta build117112,82143bytes; downloaded package SHA256 `755eadcab15db9c814cb9edf9807b92ca4100168df0c1aec28278f8aaddbbc18` matches. Hardware diagnosis remains pending; no display repair claim.
+
+
+### Beta 0.1.13 — independently initialize the proven layout
+
+- User 0.1.12 hardware trace: handler callable and app ID number; raw create n1 and both rebuild false. Missing handler/nullish normalization is not the observed failure.
+- Prior compatibility test only rebuilt after a failed four-image startup; it did not establish whether the proven layout can initialize independently. Official required order puts successful startup before rebuild, while location does not depend on startup.
+- Restore exact 0.1.7 layout as the FIRST startup payload, with only one identical-layout rebuild for invalid(1). No four-image attempt precedes it. Keep sanitized diagnostics and failure latch. This restores the last working layout rather than claiming B compatibility fixed.
+- Navigation, location, pairing and providers remain unchanged. Native display restoration, B layout and lockscreen acceptance remain pending hardware evidence.
+- 25 targeted device tests and TypeScript PASS; build/privacy119files PASS. Private Beta build117118,82149bytes; download SHA256 `c8b35ef24491f4140804a185f82dd01cede6df1a51c8786f0d05a3ae7784ea03` matches. Hardware restoration and final clean acceptance/CI remain pending.

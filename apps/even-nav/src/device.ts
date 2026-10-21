@@ -45,6 +45,9 @@ export interface PageCallTrace {
   handlerCallable: boolean;
   appIdPresent: boolean;
   appIdType: string;
+  appIdFinite: boolean;
+  appIdInteger: boolean;
+  appIdPositive: boolean;
 }
 function resultShape(value: unknown): string {
   if (value === undefined) return "undefined";
@@ -70,6 +73,7 @@ export async function observePageCall<T>(
           flutter_inappwebview?: { callHandler?: unknown };
           __EVEN_HUB_APP_ID__?: unknown;
         });
+  const appId = environment?.__EVEN_HUB_APP_ID__;
   const trace: PageCallTrace = {
     tag,
     hooked: false,
@@ -78,7 +82,11 @@ export async function observePageCall<T>(
     handlerCallable:
       typeof environment?.flutter_inappwebview?.callHandler === "function",
     appIdPresent: Boolean(environment && "__EVEN_HUB_APP_ID__" in environment),
-    appIdType: typeof environment?.__EVEN_HUB_APP_ID__,
+    appIdType: typeof appId,
+    appIdFinite: typeof appId === "number" && Number.isFinite(appId),
+    appIdInteger: typeof appId === "number" && Number.isInteger(appId),
+    appIdPositive:
+      typeof appId === "number" && Number.isFinite(appId) && appId > 0,
   };
   traces.push(trace);
   const original = bridge.callEvenApp;
@@ -122,7 +130,7 @@ function pageTraceText(traces: PageCallTrace[]): string {
   return traces
     .map(
       (trace) =>
-        `${trace.tag}(h${Number(trace.handlerCallable)},id:${trace.appIdPresent ? trace.appIdType : "missing"}):${!trace.hooked ? "unobserved" : !trace.dispatched ? "no-dispatch" : trace.raw}`,
+        `${trace.tag}(h${Number(trace.handlerCallable)},id:${trace.appIdPresent ? trace.appIdType + (trace.appIdType === "number" ? `/f${Number(trace.appIdFinite)}i${Number(trace.appIdInteger)}p${Number(trace.appIdPositive)}` : "") : "missing"}):${!trace.hooked ? "unobserved" : !trace.dispatched ? "no-dispatch" : trace.raw}`,
     )
     .join(";");
 }
@@ -481,89 +489,39 @@ export class EvenDevice {
   }
   private async createPage() {
     this.pageCalls = [];
-    const page = new CreateStartUpPageContainer({
-      containerTotalNum: 5,
-      imageObject: HUD_QUADRANTS.map(
-        (tile) =>
-          new ImageContainerProperty({
-            containerID: tile.id,
-            containerName: tile.name,
-            xPosition: tile.x,
-            yPosition: tile.y,
-            width: 288,
-            height: 144,
-          }),
-      ),
-      // Legacy-compatible event capture in the blank header gap, without layering.
-      textObject: [
-        new TextContainerProperty({
-          containerID: 5,
-          containerName: "hud-events",
-          xPosition: 300,
-          yPosition: 0,
-          width: 20,
-          height: 20,
-          content: " ",
-          isEventCapture: 1,
-        }),
-      ],
-      menuObject: new MenuContainerProperty({
-        menuItems: [
-          new MenuItemProperty({ itemID: 1, itemName: "暂停" }),
-          new MenuItemProperty({ itemID: 2, itemName: "继续" }),
-          new MenuItemProperty({ itemID: 3, itemName: "结束" }),
-        ],
-      }),
-    });
+    // Restore the proven baseline at STARTUP, not only after an uncreated B page.
+    const page = new CreateStartUpPageContainer(this.compatibilityPage());
     let result;
     try {
       result = await observePageCall(this.bridge!, "c", this.pageCalls, () =>
         this.bridge!.createStartUpPageContainer(page),
       );
     } catch (error) {
-      throw new DisplayError("PAGE", `create-${exceptionCode(error)}`);
+      throw new DisplayError("PAGE", `compat-start-${exceptionCode(error)}`);
     }
     if (result === 1) {
-      // A native page can outlive this WebView (pagehide intentionally preserves it).
-      // Rebuild the identical page once; do not change geometry or guess a fallback.
       let rebuilt;
       try {
-        rebuilt = await observePageCall(this.bridge!, "r", this.pageCalls, () =>
+        rebuilt = await observePageCall(this.bridge!, "k", this.pageCalls, () =>
           this.bridge!.rebuildPageContainer(new RebuildPageContainer(page)),
         );
       } catch (error) {
         throw new DisplayError(
           "PAGE",
-          `create-invalid(1)/rebuild-${exceptionCode(error)}`,
+          `compat-start-invalid(1)/compat-rebuild-${exceptionCode(error)}`,
         );
       }
-      if (!rebuilt) {
-        let compatible;
-        try {
-          compatible = await observePageCall(
-            this.bridge!,
-            "k",
-            this.pageCalls,
-            () => this.bridge!.rebuildPageContainer(this.compatibilityPage()),
-          );
-        } catch (error) {
-          throw new DisplayError(
-            "PAGE",
-            `create-invalid(1)/rebuild-invalid/compat-${exceptionCode(error)}`,
-          );
-        }
-        if (!compatible)
-          throw new DisplayError(
-            "PAGE",
-            "create-invalid(1)/rebuild-invalid/compat-invalid",
-          );
-        this.compatibilityLayout = true;
-      }
+      if (!rebuilt)
+        throw new DisplayError(
+          "PAGE",
+          "compat-start-invalid(1)/compat-rebuild-invalid",
+        );
     } else if (result !== 0) {
       const code =
         ["success", "invalid", "oversize", "outOfMemory"][result] || "unknown";
-      throw new DisplayError("PAGE", `create-${code}(${result})`);
+      throw new DisplayError("PAGE", `compat-start-${code}(${result})`);
     }
+    this.compatibilityLayout = true;
     this.pageCreated = true;
   }
   /** Diagnostic caller must hold navigation idle. No location/provider access. */
