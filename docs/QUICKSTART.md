@@ -34,12 +34,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\TZ\Dropbox\Codex\E
 The script changes to the project directory before invoking the official CLI.
 Enter credentials only at its local prompt.
 
-### Glasses controls (0.1.18)
+### Glasses controls (0.1.19)
 
-During navigation, double-tap to open the compact arrow-selection menu over the existing HUD. Slide to choose; single-tap to confirm. The menu contains whole-route view, zoom in, zoom out, reselect route and return to navigation. Whole-route view retains the full map and opens a scrollable itinerary overlay at the current step; slide through previous/later steps and long-text pages. Double-tap closes the menu or itinerary view and returns to navigation.
+During navigation, double-tap to open the compact arrow-selection menu over the existing HUD. Slide to choose; double-tap to confirm. Single-taps do nothing. The menu contains whole-route view, zoom in, zoom out, reselect route, return to navigation and Exit Plugin. Whole-route view starts with a full-screen map; slide forward through full-screen itinerary text pages to the end, or backward to the map. Double-tap opens the menu; select Return to Navigation and double-tap to return. There is no separate return gesture.
 
-Reselect queries once from the current location. A narrow overlay shows up to three routes with duration and distance; sliding synchronizes the selected phone tab, and a single-tap explicitly starts that route. Phone tab changes also update the glasses selection. Double-tapping cancels the glasses selector and leaves the phone at route selection; it does not resume the obsolete route.
+Reselect queries once from the current location. A narrow overlay shows up to three routes with duration and distance; sliding synchronizes the selected phone tab and route map, and a double-tap explicitly starts that route. Phone tab changes also update the glasses selection and map. Delayed map results cannot replace a newer selection.
 
 The lower-right HUD shows total remaining distance, phone-local current time and an estimated arrival time. ETA is an estimate from remaining route steps/schedules; unavailable or past estimates show `--:--`. The header reduces text size for long instructions within its existing height, preserving the large map and maneuver icon size.
 
 The phone accepts Google Maps place or route share links only. Manual address/coordinate entry and destination map picking are removed. Every route query uses the current phone location; any original start point in the shared link is not selectable as the navigation origin.
+
+Exit Plugin is the last menu item and also requires double-tap confirmation. It stops app navigation/location activity and requests the official Even SDK immediate exit (`shutDownPageContainer(0)`). Host closure on iPhone/G2 must be verified on hardware; a native failure must not be labelled successful exit.

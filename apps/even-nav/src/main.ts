@@ -100,7 +100,6 @@ let mapBusy = false,
 let zoomRedraw: ReturnType<typeof setTimeout> | undefined;
 let navigationViewKey = "";
 let routeOverview = false;
-let glassesChoiceMapVersion: number | undefined;
 let directionHistory: DeviceFix[] = [];
 let pageSuspended = false,
   lifecycleEpoch = 0;
@@ -400,6 +399,7 @@ function render() {
       selected = button.dataset.route!;
       device.selectRouteFromPhone(selected, session.snapshot.version);
       render();
+      if (device.hasRouteChoices(session.snapshot.version)) void drawMap();
       $<HTMLButtonElement>(`#route-tab-${index}`)?.focus({
         preventScroll: true,
       });
@@ -537,7 +537,6 @@ async function importInput(text: string) {
 async function plan(fromGlasses = false) {
   if (busy || !candidateChosen || !destination?.coordinate) return;
   routeOverview = false;
-  glassesChoiceMapVersion = undefined;
   device.setOverview(false);
   lastMapFrame = undefined;
   const intent = session.snapshot.intent!;
@@ -594,8 +593,6 @@ async function plan(fromGlasses = false) {
         )
           $("#workflow").scrollIntoView({ behavior: "auto", block: "start" });
       });
-      if (fromGlasses) glassesChoiceMapVersion = request.version;
-      void drawMap();
       if (fromGlasses)
         device.showRouteChoices(
           response.routes.slice(0, 3).map((route) => ({
@@ -605,6 +602,7 @@ async function plan(fromGlasses = false) {
           selected,
           request.version,
         );
+      void drawMap();
     }
   } catch (caught) {
     if (!request.signal.aborted) {
@@ -673,7 +671,6 @@ function onFix(value: DeviceFix) {
   }
 }
 async function stopNavigation(close: boolean) {
-  glassesChoiceMapVersion = undefined;
   routeOverview = false;
   device.setOverview(false);
   if (zoomRedraw) clearTimeout(zoomRedraw);
@@ -700,6 +697,7 @@ async function handleAction(action: DeviceAction, choice?: RouteChoiceAction) {
       return;
     selected = choice.routeId;
     render();
+    if (action === "SELECT_ROUTE") void drawMap();
     if (action === "START_ROUTE") {
       await start();
       if (
@@ -747,6 +745,10 @@ async function handleAction(action: DeviceAction, choice?: RouteChoiceAction) {
     )
       return;
     if (!map.adjustZoom(action === "ZOOM_IN" ? 1 : -1)) return;
+    if (routeOverview) {
+      device.refreshOverview();
+      lastFrame = 0;
+    }
     if (zoomRedraw) clearTimeout(zoomRedraw);
     zoomRedraw = setTimeout(() => {
       zoomRedraw = undefined;
@@ -761,7 +763,7 @@ async function handleAction(action: DeviceAction, choice?: RouteChoiceAction) {
   }
   if (action === "RESUME" && imuBlocksNavigation()) return;
   try {
-    if (action === "END") {
+    if (action === "END" || action === "EXIT_APP") {
       session.end();
       await stopNavigation(true);
       lastMapFrame = undefined;
@@ -778,7 +780,7 @@ async function handleAction(action: DeviceAction, choice?: RouteChoiceAction) {
       startNavigationTick();
     }
     render();
-    if (action !== "END") await drawMap();
+    if (action !== "END" && action !== "EXIT_APP") await drawMap();
   } catch (caught) {
     report(caught);
   }
@@ -829,6 +831,7 @@ async function drawMap() {
   mapBusy = true;
   const version = state.version;
   const overview = routeOverview;
+  const selectionId = selected;
   if (version !== previousMapVersion) {
     map.clear();
     previousMapVersion = version;
@@ -841,8 +844,11 @@ async function drawMap() {
     const glassesMap =
       device.connected &&
       (["NAVIGATING", "ARRIVED"].includes(state.phase) ||
-        glassesChoiceMapVersion === version);
-    map.setSize(glassesMap ? 576 : 288, glassesMap ? 192 : 144);
+        device.hasRouteChoices(version));
+    map.setSize(
+      glassesMap ? 576 : 288,
+      glassesMap ? (overview ? 256 : 192) : 144,
+    );
     await map.draw(
       center,
       destination,
@@ -861,29 +867,36 @@ async function drawMap() {
             maxAgeMs: staleThreshold(mode),
           },
     );
-    if (version !== session.snapshot.version || overview !== routeOverview)
+    if (
+      version !== session.snapshot.version ||
+      overview !== routeOverview ||
+      (state.phase === "ROUTE_SELECTION" && selectionId !== selected)
+    )
       return;
     mapError = "";
     if (
       map.ready &&
       state.phase === "ROUTE_SELECTION" &&
-      glassesChoiceMapVersion === version
+      device.hasRouteChoices(version)
     ) {
       const pixels = await map.pixels();
       if (
         session.snapshot.version === version &&
         session.snapshot.phase === "ROUTE_SELECTION" &&
-        glassesChoiceMapVersion === version
+        device.hasRouteChoices(version) &&
+        selectionId === selected
       ) {
-        glassesChoiceMapVersion = undefined;
-        device.setRouteChoiceBackground({
-          sequence: ++sequence,
-          version,
-          pixels,
-          instruction: "选择路线 · 尚未开始导航",
-          status: "滑动选择 · 单击开始 · 双击取消",
-          attribution: map.attribution,
-        });
+        device.setRouteChoiceBackground(
+          {
+            sequence: ++sequence,
+            version,
+            pixels,
+            instruction: "选择路线 · 尚未开始导航",
+            status: "滑动选择 · 双击开始",
+            attribution: map.attribution,
+          },
+          selectionId,
+        );
       }
     }
     if (
@@ -911,7 +924,9 @@ async function drawMap() {
         pixels,
         icon: { key: icon, pixels: iconPixels },
         guidance: overview ? undefined : guidanceView(state, mode),
-        instruction: overview ? "全程路线 · 双击返回导航" : instruction(state),
+        instruction: overview
+          ? "全程路线 · 滑动查看行程 · 双击菜单"
+          : instruction(state),
         status: hudStatus(state, mode),
         attribution: map.attribution,
       });

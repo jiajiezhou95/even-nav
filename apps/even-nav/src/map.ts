@@ -80,7 +80,7 @@ export class NavigationMap {
   setSize(width: number, height: number) {
     if (!(
       (width === 288 && height === 144) ||
-      (width === 576 && height === 192)
+      (width === 576 && (height === 192 || height === 256))
     ))
       throw new Error("Unsupported navigation map viewport");
     if (width === this.width && height === this.height) return;

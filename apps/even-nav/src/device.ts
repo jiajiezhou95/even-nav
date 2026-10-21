@@ -25,6 +25,7 @@ import {
   renderCompatibilityMap,
 } from "./hud-renderer";
 import type { GuidanceView } from "./guidance";
+import { renderHudOverview } from "./hud-overview";
 import {
   HUD_MENU_ITEMS,
   renderHudMenu,
@@ -82,7 +83,8 @@ export type DeviceAction =
   | "EXIT_OVERVIEW"
   | "RESELECT_ROUTE"
   | "SELECT_ROUTE"
-  | "START_ROUTE";
+  | "START_ROUTE"
+  | "EXIT_APP";
 export interface RouteChoiceAction {
   routeId: string;
   version: number;
@@ -219,6 +221,7 @@ export interface HudFrame {
 
 /** One in-flight operation, one replaceable pending operation. No automatic retry. */
 export class LatestFrameQueue<T> {
+  private draining?: Promise<void>;
   private pending?: T;
   private active = false;
   private epoch = 0;
@@ -230,7 +233,7 @@ export class LatestFrameQueue<T> {
   push(value: T) {
     if (this.queued?.(value) === false) return;
     this.pending = value;
-    if (!this.active) void this.drain();
+    if (!this.active) this.draining = this.drain();
   }
   invalidate() {
     this.epoch++;
@@ -238,6 +241,9 @@ export class LatestFrameQueue<T> {
   }
   get inFlight() {
     return this.active;
+  }
+  async waitForIdle() {
+    await this.draining;
   }
   private async drain() {
     this.active = true;
@@ -285,6 +291,7 @@ export class EvenDevice {
   private browserWatch?: number;
   private subscribed = false;
   private connecting?: Promise<void>;
+  private closing = false;
   private locationStarting?: Promise<void>;
   private locationStopping?: Promise<void>;
   private pageCreated = false;
@@ -315,9 +322,9 @@ export class EvenDevice {
   private stepPages: HudStepPage[] = [];
   private stepPage = 0;
   private overviewReady = false;
+  private overviewFrame?: HudFrame;
   private displayMessage?: string;
   private presentationEpoch = 0;
-  private pendingClick?: ReturnType<typeof setTimeout>;
   connected = false;
   source: "EVEN" | "BROWSER_DEV" | "NONE" = "NONE";
   readonly queue: LatestFrameQueue<HudFrame>;
@@ -333,11 +340,16 @@ export class EvenDevice {
   ) {
     this.queue = new LatestFrameQueue(
       async (frame) => {
-        if (frame.version !== this.version || !this.bridge || !this.connected)
+        if (
+          this.closing ||
+          frame.version !== this.version ||
+          !this.bridge ||
+          !this.connected
+        )
           return;
         await this.ensurePage();
         if (frame.version !== this.version || !this.connected) return;
-        if (this.overview && !frame.overview) return;
+        if (this.overview && (!frame.overview || !this.overviewFrame)) return;
         const presentation = this.presentationEpoch;
         if (this.compatibilityLayout) {
           if (!(await this.sendCompatibilityFrame(frame))) return;
@@ -360,25 +372,19 @@ export class EvenDevice {
                       selected: this.menuSelected,
                     }),
                   ]
-                : this.overview && this.overviewReady && this.stepPages.length
-                  ? [
-                      undefined,
-                      await renderHudListTile(this.menuBackground, {
-                        page: this.stepPages[this.stepPage],
-                      }),
-                    ]
+                : this.overview
+                  ? await renderHudOverview(
+                      this.overviewFrame!,
+                      this.stepPage > 0
+                        ? this.stepPages[this.stepPage - 1]
+                        : undefined,
+                    )
                   : this.displayMessage
                     ? await renderHudMenu(
                         this.menuSelected,
                         this.displayMessage,
                       )
                     : await renderHud(frame);
-            if (this.overview && !this.overviewReady && this.stepPages.length) {
-              this.menuBackground = quadrants[1]?.slice();
-              quadrants[1] = await renderHudListTile(this.menuBackground, {
-                page: this.stepPages[this.stepPage],
-              });
-            }
             if (this.routeChoices?.background && !this.routeChoices.ready) {
               quadrants = await renderHud(this.routeChoices.background);
               this.menuBackground = quadrants[1]?.slice();
@@ -478,6 +484,15 @@ export class EvenDevice {
         );
       },
       (frame) => {
+        if (this.closing) return false;
+        if (
+          frame.version === this.version &&
+          frame.overview &&
+          this.overview &&
+          !this.overviewReady &&
+          !this.requestingPresentation
+        )
+          this.overviewFrame = frame;
         if (
           frame.version === this.version &&
           !this.displayMessage &&
@@ -493,10 +508,6 @@ export class EvenDevice {
           return false;
       },
     );
-  }
-  private cancelMenuClick() {
-    if (this.pendingClick !== undefined) clearTimeout(this.pendingClick);
-    this.pendingClick = undefined;
   }
   private redrawPresentation() {
     this.presentationEpoch++;
@@ -525,7 +536,6 @@ export class EvenDevice {
   ) {
     if (!this.connected || this.compatibilityLayout || !items.length) return;
     this.setVersion(version);
-    this.cancelMenuClick();
     this.menuOpen = false;
     this.overview = false;
     this.displayMessage = undefined;
@@ -543,11 +553,17 @@ export class EvenDevice {
     const index = this.routeChoices.items.findIndex((item) => item.id === id);
     if (index < 0 || index === this.menuSelected) return;
     this.menuSelected = index;
-    this.cancelMenuClick();
     this.redrawPresentation();
   }
-  setRouteChoiceBackground(frame: HudFrame) {
-    if (!this.routeChoices || this.routeChoices.version !== frame.version)
+  hasRouteChoices(version: number) {
+    return this.routeChoices?.version === version;
+  }
+  setRouteChoiceBackground(frame: HudFrame, routeId?: string) {
+    if (
+      !this.routeChoices ||
+      this.routeChoices.version !== frame.version ||
+      (routeId && this.routeChoices.items[this.menuSelected].id !== routeId)
+    )
       return;
     this.routeChoices.background = frame;
     this.routeChoices.ready = false;
@@ -556,20 +572,23 @@ export class EvenDevice {
   setOverview(value: boolean, steps: HudRouteStep[] = []) {
     this.overview = value;
     this.overviewReady = false;
+    this.overviewFrame = undefined;
     this.stepPages = value ? buildHudStepPages(steps) : [];
-    this.stepPage = Math.max(
-      0,
-      this.stepPages.findIndex((page) => page.current),
-    );
+    this.stepPage = 0;
     this.menuOpen = false;
-    this.cancelMenuClick();
+    this.presentationEpoch++;
+  }
+  refreshOverview() {
+    if (!this.overview) return;
+    this.overviewFrame = undefined;
+    this.overviewReady = false;
+    this.stepPage = 0;
     this.presentationEpoch++;
   }
   showMessage(message: string) {
     this.routeChoices = undefined;
     this.menuOpen = false;
     this.overview = false;
-    this.cancelMenuClick();
     this.latestFrame = undefined;
     this.displayMessage = message;
     this.presentationEpoch++;
@@ -585,6 +604,7 @@ export class EvenDevice {
   private resetPresentation() {
     this.stepPages = [];
     this.overviewReady = false;
+    this.overviewFrame = undefined;
     this.routeChoices = undefined;
     this.menuOpen = false;
     this.menuBackground = undefined;
@@ -592,7 +612,6 @@ export class EvenDevice {
     this.displayMessage = undefined;
     this.latestFrame = undefined;
     this.lastSubmission = undefined;
-    this.cancelMenuClick();
     this.presentationEpoch++;
     this.quadrantPixels = [];
   }
@@ -924,11 +943,15 @@ export class EvenDevice {
       const eventType = touchEventType(event);
       const now = Date.now();
       if (eventType === OsEventTypeList.DOUBLE_CLICK_EVENT) {
-        this.cancelMenuClick();
         if (now - this.lastDoubleAt < 300) return;
         this.lastDoubleAt = now;
         if (this.routeChoices) {
-          this.showMessage("请在手机选择路线");
+          const choice = {
+            routeId: this.routeChoices.items[this.menuSelected].id,
+            version: this.routeChoices.version,
+          };
+          this.showMessage("正在开始所选路线");
+          this.onAction("START_ROUTE", choice);
           return;
         }
         if (
@@ -940,52 +963,25 @@ export class EvenDevice {
           this.latestFrame.version !== this.version
         )
           return;
-        if (this.overview) {
-          this.overview = false;
-          this.onAction("EXIT_OVERVIEW");
+        if (this.menuOpen) {
+          const action = HUD_MENU_ITEMS[this.menuSelected].action;
+          this.menuOpen = false;
+          if (action === "RETURN_NAVIGATION") {
+            if (this.overview) this.onAction("EXIT_OVERVIEW");
+            else this.redrawPresentation();
+          } else {
+            this.redrawPresentation();
+            this.onAction(action);
+          }
           return;
         }
-        this.menuOpen = !this.menuOpen;
-        if (this.menuOpen)
-          this.menuBackground = this.quadrantPixels[1]?.slice();
+        this.menuOpen = true;
+        this.menuBackground = this.quadrantPixels[1]?.slice();
         this.menuSelected = 0;
         this.redrawPresentation();
         return;
       }
-      if (eventType === OsEventTypeList.CLICK_EVENT) {
-        if (
-          (!this.menuOpen && !this.routeChoices) ||
-          this.pendingClick !== undefined ||
-          now - this.lastDoubleAt < 300
-        )
-          return;
-        const selected = this.menuSelected;
-        const choices = this.routeChoices;
-        this.pendingClick = setTimeout(() => {
-          this.pendingClick = undefined;
-          if (choices) {
-            if (
-              choices !== this.routeChoices ||
-              choices.version !== this.version ||
-              selected !== this.menuSelected
-            )
-              return;
-            const choice = {
-              routeId: choices.items[selected].id,
-              version: choices.version,
-            };
-            this.showMessage("正在开始所选路线");
-            this.onAction("START_ROUTE", choice);
-            return;
-          }
-          if (!this.menuOpen || selected !== this.menuSelected) return;
-          this.menuOpen = false;
-          this.redrawPresentation();
-          const action = HUD_MENU_ITEMS[selected].action;
-          if (action !== "RETURN_NAVIGATION") this.onAction(action);
-        }, 300);
-        return;
-      }
+      if (eventType === OsEventTypeList.CLICK_EVENT) return;
       if (
         eventType !== OsEventTypeList.SCROLL_TOP_EVENT &&
         eventType !== OsEventTypeList.SCROLL_BOTTOM_EVENT
@@ -993,11 +989,11 @@ export class EvenDevice {
         return;
       if (now - this.lastScrollAt < 250) return;
       this.lastScrollAt = now;
-      if (this.overview) {
+      if (this.overview && !this.menuOpen) {
         const next = Math.max(
           0,
           Math.min(
-            this.stepPages.length - 1,
+            this.stepPages.length,
             this.stepPage +
               (eventType === OsEventTypeList.SCROLL_TOP_EVENT ? -1 : 1),
           ),
@@ -1009,7 +1005,6 @@ export class EvenDevice {
         return;
       }
       if (this.routeChoices) {
-        this.cancelMenuClick();
         this.menuSelected =
           (this.menuSelected +
             (eventType === OsEventTypeList.SCROLL_TOP_EVENT ? -1 : 1) +
@@ -1023,7 +1018,6 @@ export class EvenDevice {
         return;
       }
       if (this.menuOpen) {
-        this.cancelMenuClick();
         this.menuSelected =
           (this.menuSelected +
             (eventType === OsEventTypeList.SCROLL_TOP_EVENT ? -1 : 1) +
@@ -1160,13 +1154,28 @@ export class EvenDevice {
     this.queue.invalidate();
   }
   async close() {
+    this.closing = true;
     this.resetPresentation();
     this.queue.invalidate();
-    await this.stopLocation();
+    try {
+      await this.stopLocation();
+      await this.queue.waitForIdle();
+      if (
+        this.bridge &&
+        this.pageCreated &&
+        !(await this.bridge.shutDownPageContainer(0))
+      )
+        throw new Error("插件退出请求失败，请在 Even App 中关闭。");
+    } catch (error) {
+      this.closing = false;
+      throw new NavError(
+        "DISPLAY_DISCONNECTED",
+        "插件退出请求失败，请在 Even App 中关闭。",
+        true,
+      );
+    }
     this.unsubscribeDevice?.();
     this.unsubscribeEvents?.();
-    if (this.bridge && this.pageCreated)
-      await this.bridge.shutDownPageContainer(0);
     this.bridge = undefined;
     this.pageCreated = false;
     this.pageFailure = undefined;
@@ -1178,5 +1187,6 @@ export class EvenDevice {
     this.legacyTextValues.clear();
     this.connected = false;
     this.source = "NONE";
+    this.closing = false;
   }
 }

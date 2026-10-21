@@ -6,6 +6,7 @@ export const HUD_MENU_ITEMS = [
   { label: "缩小地图", action: "ZOOM_OUT" },
   { label: "重选路线", action: "RESELECT_ROUTE" },
   { label: "返回导航", action: "RETURN_NAVIGATION" },
+  { label: "退出插件", action: "EXIT_APP" },
 ] as const;
 
 export interface HudRouteChoice {
@@ -33,10 +34,11 @@ export function buildHudStepPages(
 ): HudStepPage[] {
   if (!measure) {
     const ctx = document.createElement("canvas").getContext("2d")!;
-    ctx.font = '20px "Microsoft YaHei", "PingFang SC", sans-serif';
+    ctx.font = '22px "Microsoft YaHei", "PingFang SC", sans-serif';
     measure = (text) => ctx.measureText(text).width;
   }
-  return steps.flatMap((step, index) => {
+  const all: { text: string; step: number; current: boolean }[] = [];
+  steps.forEach((step, index) => {
     const lines: string[] = [];
     let line = "";
     for (const char of step.text) {
@@ -45,22 +47,37 @@ export function buildHudStepPages(
         line = "";
         continue;
       }
-      if (line && measure!(line + char) > 162) {
+      if (line && measure!(line + char) > 552) {
         lines.push(line);
         line = "";
       }
       line += char;
     }
     if (line || !lines.length) lines.push(line);
-    const pages = Math.ceil(lines.length / 4);
-    return Array.from({ length: pages }, (_, page) => ({
-      lines: lines.slice(page * 4, page * 4 + 4),
+    all.push({
+      text: `步骤 ${index + 1}/${steps.length}${step.current ? " · 当前" : ""}`,
       step: index + 1,
-      total: steps.length,
       current: step.current,
+    });
+    all.push(
+      ...lines.map((text) => ({
+        text,
+        step: index + 1,
+        current: step.current,
+      })),
+    );
+  });
+  const pages = Math.ceil(all.length / 9);
+  return Array.from({ length: pages }, (_, page) => {
+    const rows = all.slice(page * 9, page * 9 + 9);
+    return {
+      lines: rows.map((row) => row.text),
+      step: rows[0].step,
+      total: steps.length,
+      current: rows.some((row) => row.current),
       page: page + 1,
       pages,
-    }));
+    };
   });
 }
 
@@ -114,7 +131,7 @@ export async function renderHudListTile(
       ctx.fillText(line.replace(/[\r\n]/g, ""), 117, 43 + i * 22),
     );
     ctx.font = '16px "Microsoft YaHei", "PingFang SC", sans-serif';
-    ctx.fillText(`${page.page}/${page.pages}页 · 双击返回`, 117, 132);
+    ctx.fillText(`${page.page}/${page.pages}页 · 双击菜单`, 117, 132);
   }
   const blob = await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob(
@@ -150,7 +167,7 @@ export async function renderHudMenuTile(
   ctx.textBaseline = "middle";
   ctx.font = '20px "Microsoft YaHei", "PingFang SC", sans-serif';
   HUD_MENU_ITEMS.forEach((item, index) => {
-    const y = 20 + index * 26;
+    const y = 17 + index * 22;
     if (index === selected) ctx.fillText("›", 119, y);
     ctx.fillText(item.label, 138, y);
   });
@@ -199,8 +216,8 @@ export async function renderHudMenu(
     ctx.font = '18px "Microsoft YaHei", "PingFang SC", sans-serif';
     ctx.fillText(
       routes
-        ? "滑动选择 · 单击开始 · 双击取消"
-        : "滑动选择 · 单击确认 · 双击返回",
+        ? "滑动选择 · 双击开始"
+        : "滑动选择 · 双击确认",
       24,
       264,
     );

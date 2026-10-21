@@ -1554,14 +1554,30 @@ test("SDK scroll gestures zoom the active map without rerouting and ignore non-n
               mode: "WALK",
               distanceMeters: i === 0 ? 230 : 450,
               durationSeconds: 180 + i * 60,
-              geometry: [request.origin, request.destination.coordinate],
+              geometry:
+                i === 1
+                  ? [
+                      request.origin,
+                      { lat: 35.6833, lng: 139.7674 },
+                      request.destination.coordinate,
+                    ]
+                  : [request.origin, request.destination.coordinate],
               steps: [
                 {
                   instruction:
                     i === 0
-                      ? "沿道路前行，经过中央车站东出口后右转进入地下通道。\n在第二个路口左转，沿人行道继续前行至公交站。"
+                      ? "沿道路前行，经过中央车站东出口后右转进入地下通道。\n在第二个路口左转，沿人行道继续前行至公交站。".repeat(
+                          12,
+                        )
                       : "沿第二路线前行",
-                  geometry: [request.origin, request.destination.coordinate],
+                  geometry:
+                    i === 1
+                      ? [
+                          request.origin,
+                          { lat: 35.6833, lng: 139.7674 },
+                          request.destination.coordinate,
+                        ]
+                      : [request.origin, request.destination.coordinate],
                   distanceMeters: i === 0 ? 230 : 450,
                   durationSeconds: 180 + i * 60,
                 },
@@ -1636,13 +1652,38 @@ test("SDK scroll gestures zoom the active map without rerouting and ignore non-n
     const { evenHubEventFromJson } = await import(sdkPath);
     const draw = NavigationMap.prototype.draw;
     (window as any).mapViews = [];
+    (window as any).mapSelected = [];
+    (window as any).candidateFrames = [];
+    const devicePath = "/src/device.ts";
+    const { EvenDevice } = await import(devicePath);
+    const background = EvenDevice.prototype.setRouteChoiceBackground;
+    EvenDevice.prototype.setRouteChoiceBackground = function (
+      frame: any,
+      routeId: string,
+    ) {
+      (window as any).candidateFrames.push(routeId);
+      return background.call(this, frame, routeId);
+    };
     NavigationMap.prototype.draw = async function (...args: any[]) {
       (window as any).mapViews.push((args[4] || []).map((r: any) => r.id));
-      return draw.apply(this, args);
+      (window as any).mapSelected.push(args[2]?.id);
+      const result = await draw.apply(this, args);
+      if (
+        (window as any).holdCandidateDraw &&
+        args[2]?.id === "synthetic-road" &&
+        args[4]?.length === 3
+      ) {
+        (window as any).holdCandidateDraw = false;
+        await new Promise<void>((resolve) => {
+          (window as any).releaseCandidateDraw = resolve;
+        });
+      }
+      return result;
     };
     (window as any).hudImages = {};
     (window as any).hudWriteCount = 0;
     (window as any).hudWriteIds = [];
+    (window as any).nativeLifecycle = [];
     (window as any).waitForList = async (content: unknown) => {
       const path = "/src/hud-menu.ts";
       const { renderHudListTile } = await import(path);
@@ -1713,7 +1754,10 @@ test("SDK scroll gestures zoom the active map without rerouting and ignore non-n
       }),
       onAppLocationChanged: () => () => {},
       startAppLocationUpdates: async () => true,
-      stopAppLocationUpdates: async () => true,
+      stopAppLocationUpdates: async () => {
+        (window as any).nativeLifecycle.push("stopGPS");
+        return true;
+      },
       createStartUpPageContainer: async () => 0,
       rebuildPageContainer: async () => {
         (window as any).rebuildCalls++;
@@ -1728,7 +1772,10 @@ test("SDK scroll gestures zoom the active map without rerouting and ignore non-n
         (window as any).hudWriteIds.push(value.containerID);
         return "success";
       },
-      shutDownPageContainer: async () => true,
+      shutDownPageContainer: async (mode: number) => {
+        (window as any).nativeLifecycle.push(`exit${mode}`);
+        return true;
+      },
     };
   });
   await page.getByRole("button", { name: "连接 Even App / G2" }).click();
@@ -1755,81 +1802,129 @@ test("SDK scroll gestures zoom the active map without rerouting and ignore non-n
   await expect(
     page.getByText("G2 已连接，大地图", { exact: true }),
   ).toBeVisible();
+  const captureHud = async (path: string) => {
+    const png = await page.evaluate(async () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 576;
+      canvas.height = 288;
+      for (let i = 0; i < 4; i++) {
+        const bitmap = await createImageBitmap(
+          new Blob([new Uint8Array((window as any).hudImages[i + 1])], {
+            type: "image/png",
+          }),
+        );
+        canvas
+          .getContext("2d")!
+          .drawImage(bitmap, (i % 2) * 288, Math.floor(i / 2) * 144);
+        bitmap.close();
+      }
+      return canvas.toDataURL().split(",")[1];
+    });
+    await writeFile(path, Buffer.from(png, "base64"));
+  };
+  const waitForSettledWrites = async () => {
+    await page.evaluate(async () => {
+      let count = -1;
+      for (let i = 0; i < 100; i++) {
+        const next = (window as any).hudWriteCount;
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        if (count === next && next === (window as any).hudWriteCount) return;
+        count = next;
+      }
+      throw new Error("Native presentation did not settle");
+    });
+  };
+  const nativeMapSignature = () =>
+    page.evaluate(async () => {
+      const bitmap = await createImageBitmap(
+        new Blob([new Uint8Array((window as any).hudImages[3])], {
+          type: "image/png",
+        }),
+      );
+      const canvas = document.createElement("canvas");
+      canvas.width = 288;
+      canvas.height = 144;
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(bitmap, 0, 0);
+      bitmap.close();
+      return Array.from(ctx.getImageData(0, 0, 288, 80).data);
+    });
   await page.evaluate(() => (window as any).emitScroll(3, 20));
-  // Read the actual four native PNG writes, not a separate UI illustration.
-  await expect
-    .poll(() =>
-      page.evaluate(() => Object.keys((window as any).hudImages).length),
-    )
-    .toBe(4);
   await page.evaluate(() => (window as any).emitScroll(0, 20));
+  await page.waitForTimeout(350);
+  expect(await page.evaluate(() => (window as any).mapViews.at(-1))).toEqual(
+    [],
+  );
+  await page.evaluate(() => (window as any).emitScroll(3, 20));
   await expect(page.locator(".full-itinerary")).toHaveAttribute("open", "");
   await expect
     .poll(() => page.evaluate(() => (window as any).mapViews.at(-1)))
     .toEqual(["synthetic-road"]);
-  expect(routeCalls).toBe(1);
-  await page.screenshot({ path: ".local/evidence/overview-phone.png" });
+  await waitForSettledWrites();
+  await captureHud(".local/evidence/hud-overview-map-native.png");
+  const mapPixels = await nativeMapSignature();
+  expect(
+    mapPixels.filter((v, i) => i % 4 === 0 && v > 0).length,
+  ).toBeGreaterThan(1000);
+  const overviewZoom = viewports.at(-1);
   await page.evaluate(async () => {
     const path = "/src/hud-menu.ts";
     const { buildHudStepPages } = await import(path);
     (window as any).overviewPages = buildHudStepPages([
       {
-        text: "沿道路前行，经过中央车站东出口后右转进入地下通道。\n在第二个路口左转，沿人行道继续前行至公交站。 · 230米",
+        text:
+          "沿道路前行，经过中央车站东出口后右转进入地下通道。\n在第二个路口左转，沿人行道继续前行至公交站。".repeat(
+            12,
+          ) + " · 230米",
         current: true,
       },
     ]);
-    await (window as any).waitForList({
-      page: (window as any).overviewPages[0],
-    });
-  });
-  const overviewBefore = await page.evaluate(
-    () => (window as any).hudWriteCount,
-  );
-  const overviewViewport = viewports.at(-1);
-  await page.evaluate(() => (window as any).emitScroll(2, 20));
-  await page.evaluate(() =>
-    (window as any).waitForList({ page: (window as any).overviewPages[1] }),
-  );
-  expect(
-    await page.evaluate(() => (window as any).hudWriteIds.slice(-1)),
-  ).toEqual([2]);
-  expect(await page.evaluate(() => (window as any).hudWriteCount)).toBe(
-    overviewBefore + 1,
-  );
-  expect(viewports.at(-1)).toBe(overviewViewport);
-  console.log(
-    "OVERVIEW_PAGE_TRANSPORT",
-    await page.evaluate(() => ({
-      writes: 1,
-      bytes: (window as any).hudImages[2].length,
-    })),
-  );
-  const overviewPng = await page.evaluate(async () => {
-    const canvas = document.createElement("canvas");
-    canvas.width = 576;
-    canvas.height = 288;
-    for (let i = 0; i < 4; i++) {
-      const bitmap = await createImageBitmap(
-        new Blob([new Uint8Array((window as any).hudImages[i + 1])], {
-          type: "image/png",
-        }),
+    (window as any).waitForTextPage = async (index: number) => {
+      const rendererPath = "/src/hud-overview.ts";
+      const { renderHudOverview } = await import(rendererPath);
+      const expected = await renderHudOverview(
+        {},
+        (window as any).overviewPages[index],
       );
-      canvas
-        .getContext("2d")!
-        .drawImage(bitmap, (i % 2) * 288, Math.floor(i / 2) * 144);
-      bitmap.close();
-    }
-    return canvas.toDataURL().split(",")[1];
+      for (let attempt = 0; attempt < 150; attempt++) {
+        if (
+          expected.every(
+            (bytes: Uint8Array, i: number) =>
+              JSON.stringify(Array.from(bytes)) ===
+              JSON.stringify((window as any).hudImages[i + 1]),
+          )
+        )
+          return;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      throw new Error("Full text page did not reach all native tiles");
+    };
   });
-  await writeFile(
-    ".local/evidence/hud-overview-steps-native.png",
-    Buffer.from(overviewPng, "base64"),
+  const pages = await page.evaluate(() => (window as any).overviewPages.length);
+  expect(pages).toBeGreaterThan(1);
+  for (let i = 0; i < pages; i++) {
+    await page.evaluate(() => (window as any).emitScroll(2, 20));
+    await page.evaluate((index) => (window as any).waitForTextPage(index), i);
+  }
+  await captureHud(".local/evidence/hud-overview-text-native.png");
+  const endWrites = await page.evaluate(() => (window as any).hudWriteCount);
+  await page.evaluate(() => (window as any).emitScroll(2));
+  expect(await page.evaluate(() => (window as any).hudWriteCount)).toBe(
+    endWrites,
   );
+  expect(viewports.at(-1)).toBe(overviewZoom);
+  // Double tap opens the menu; only its return item exits overview.
+  await page.evaluate(() => (window as any).emitScroll(3, 20));
+  await page.evaluate(() => (window as any).emitScroll(1));
+  await page.evaluate(() => (window as any).emitScroll(1));
+  await page.evaluate(() => (window as any).emitScroll(0, 20));
+  expect(await page.evaluate(() => (window as any).mapViews.at(-1))).toEqual([
+    "synthetic-road",
+  ]);
   await page.evaluate(() => (window as any).emitScroll(3, 20));
   await expect
     .poll(() => page.evaluate(() => (window as any).mapViews.at(-1)))
     .toEqual([]);
-  // Menu zoom actions and return do not query or restart a route.
   for (const [selection, expectedZoom] of [
     [1, 17],
     [2, 16],
@@ -1838,194 +1933,94 @@ test("SDK scroll gestures zoom the active map without rerouting and ignore non-n
     await page.evaluate(() => (window as any).emitScroll(3));
     for (let i = 0; i < selection; i++)
       await page.evaluate(() => (window as any).emitScroll(2));
-    await page.evaluate(() => (window as any).emitScroll(0, 20));
+    await page.evaluate(() => (window as any).emitScroll(3, 20));
     await expect.poll(() => viewports.at(-1)).toBe(expectedZoom);
-    // Confirmation is delayed to disambiguate double taps.
-    await page.waitForTimeout(350);
+    await waitForSettledWrites();
     expect(routeCalls).toBe(1);
   }
-  await page.evaluate(() => {
-    (window as any).menuBackground = (window as any).hudImages[2].slice();
-  });
   await page.evaluate(() => (window as any).emitScroll(3));
-  // Waiting for the input boundary also lets the serialized menu image finish.
   await page.evaluate(() => (window as any).emitScroll(1));
-  const beforeSelection = await page.evaluate(
-    () => (window as any).hudWriteCount,
-  );
   await page.evaluate(() => (window as any).emitScroll(1));
-  const menuPng = await page.evaluate(async () => {
-    const path = "/src/hud-menu.ts";
-    const { renderHudMenuTile } = await import(path);
-    const expected = await renderHudMenuTile(
-      3,
-      new Uint8Array((window as any).menuBackground),
-    );
-    // Poll until the single actual overlay write matches the compositor output.
-    for (let attempt = 0; attempt < 100; attempt++) {
-      if (
-        JSON.stringify(Array.from(expected)) ===
-        JSON.stringify((window as any).hudImages[2])
-      )
-        break;
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      if (attempt === 99)
-        throw new Error("Menu never reached h1 native container");
-    }
-    const canvas = document.createElement("canvas");
-    canvas.width = 576;
-    canvas.height = 288;
-    for (let i = 0; i < 4; i++) {
-      const bitmap = await createImageBitmap(
-        new Blob([new Uint8Array((window as any).hudImages[i + 1])], {
-          type: "image/png",
-        }),
-      );
-      if (bitmap.width !== 288 || bitmap.height !== 144)
-        throw new Error("Invalid native menu tile");
-      canvas
-        .getContext("2d")!
-        .drawImage(bitmap, (i % 2) * 288, Math.floor(i / 2) * 144);
-      bitmap.close();
-    }
-    return canvas.toDataURL().split(",")[1];
-  });
-  await writeFile(
-    ".local/evidence/hud-menu-native.png",
-    Buffer.from(menuPng, "base64"),
-  );
-  expect(await page.evaluate(() => (window as any).hudWriteCount)).toBe(
-    beforeSelection + 1,
-  );
-  console.log(
-    "MENU_SELECTION_TRANSPORT",
-    await page.evaluate(() => ({
-      writes: 1,
-      bytes: (window as any).hudImages[2].length,
-    })),
-  );
-  expect(routeCalls).toBe(1);
-  await page.evaluate(() => (window as any).emitScroll(0, 20));
+  await page.evaluate(() => (window as any).emitScroll(1));
+  await page.evaluate(() => (window as any).emitScroll(3, 20));
   await expect(page.getByRole("tablist", { name: "可选路线" })).toBeVisible();
   await expect(page.locator(".navigation")).toHaveCount(0);
   expect(routeCalls).toBe(2);
-  await expect(page.getByRole("button", { name: "开始导航 ↗" })).toBeVisible();
-  expect(await page.evaluate(() => (window as any).rebuildCalls)).toBe(1);
-  await page.evaluate(() =>
-    (window as any).waitForList({
-      selected: 0,
-      routes: [
-        { id: "synthetic-road", summary: "3 分钟 · 230 m" },
-        { id: "synthetic-second", summary: "4 分钟 · 450 m" },
-        { id: "synthetic-third", summary: "5 分钟 · 450 m" },
-      ],
-    }),
-  );
-  // Initial safe map presentation completes before measuring a list-only selection.
   await expect
-    .poll(() => page.evaluate(() => (window as any).mapViews.at(-1)))
-    .toEqual(["synthetic-road", "synthetic-second", "synthetic-third"]);
-  await expect
-    .poll(() =>
-      page.evaluate(async () => {
-        const canvas = document.createElement("canvas");
-        canvas.width = 288;
-        canvas.height = 144;
-        const bitmap = await createImageBitmap(
-          new Blob([new Uint8Array((window as any).hudImages[4])], {
-            type: "image/png",
-          }),
-        );
-        const ctx = canvas.getContext("2d")!;
-        ctx.drawImage(bitmap, 0, 0);
-        bitmap.close();
-        const pixels = ctx.getImageData(0, 112, 288, 32).data;
-        let lit = 0;
-        for (let i = 0; i < pixels.length; i += 4) if (pixels[i] > 128) lit++;
-        return lit;
-      }),
-    )
-    .toBeGreaterThan(100);
-  const choiceBefore = await page.evaluate(() => (window as any).hudWriteCount);
+    .poll(() => page.evaluate(() => (window as any).candidateFrames.at(-1)))
+    .toBe("synthetic-road");
+  await waitForSettledWrites();
+  const firstMap = await nativeMapSignature();
+  await captureHud(".local/evidence/hud-route-choice-1-native.png");
   await page.evaluate(() => (window as any).emitScroll(2, 20));
   await expect(
     page.getByRole("tab", { name: "路线 2 4 分钟", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
-  const choicesPng = await page.evaluate(async () => {
-    await (window as any).waitForList({
-      selected: 1,
-      routes: [
-        { id: "synthetic-road", summary: "3 分钟 · 230 m" },
-        { id: "synthetic-second", summary: "4 分钟 · 450 m" },
-        { id: "synthetic-third", summary: "5 分钟 · 450 m" },
-      ],
-    });
-    const canvas = document.createElement("canvas");
-    canvas.width = 576;
-    canvas.height = 288;
-    for (let i = 0; i < 4; i++) {
-      const bitmap = await createImageBitmap(
-        new Blob([new Uint8Array((window as any).hudImages[i + 1])], {
-          type: "image/png",
-        }),
-      );
-      canvas
-        .getContext("2d")!
-        .drawImage(bitmap, (i % 2) * 288, Math.floor(i / 2) * 144);
-      bitmap.close();
-    }
-    return canvas.toDataURL().split(",")[1];
+  await expect
+    .poll(() => page.evaluate(() => (window as any).candidateFrames.at(-1)))
+    .toBe("synthetic-second");
+  await waitForSettledWrites();
+  const secondMap = await nativeMapSignature();
+  expect(secondMap).not.toEqual(firstMap);
+  await captureHud(".local/evidence/hud-route-choice-2-native.png");
+  // A delayed old selection must not replace the newer selected candidate map.
+  const framesBefore = await page.evaluate(
+    () => (window as any).candidateFrames.length,
+  );
+  await page.evaluate(() => {
+    (window as any).holdCandidateDraw = true;
   });
-  await writeFile(
-    ".local/evidence/hud-route-choices-native.png",
-    Buffer.from(choicesPng, "base64"),
-  );
-  // A real static map must remain below the narrow candidate selector, not the invalid-size fallback.
-  const choiceMapPixels = await page.evaluate(async () => {
-    const canvas = document.createElement("canvas");
-    canvas.width = 288;
-    canvas.height = 144;
-    const bitmap = await createImageBitmap(
-      new Blob([new Uint8Array((window as any).hudImages[3])], {
-        type: "image/png",
-      }),
-    );
-    const ctx = canvas.getContext("2d")!;
-    ctx.drawImage(bitmap, 0, 0);
-    bitmap.close();
-    const pixels = ctx.getImageData(0, 0, 288, 80).data;
-    let lit = 0;
-    for (let i = 0; i < pixels.length; i += 4) if (pixels[i] > 0) lit++;
-    return lit;
-  });
-  expect(choiceMapPixels).toBeGreaterThan(1000);
-  expect(await page.evaluate(() => (window as any).hudWriteCount)).toBe(
-    choiceBefore + 1,
-  );
-  console.log(
-    "ROUTE_CHOICE_TRANSPORT",
-    await page.evaluate(() => ({
-      writes: 1,
-      bytes: (window as any).hudImages[2].length,
-    })),
-  );
-  const beforeRestart = await page.evaluate(
-    () => (window as any).hudWriteCount,
-  );
+  await page.getByRole("tab", { name: "路线 1 3 分钟", exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => typeof (window as any).releaseCandidateDraw),
+    )
+    .toBe("function");
+  await page.evaluate(() => (window as any).emitScroll(2));
+  await page.evaluate(() => (window as any).releaseCandidateDraw());
+  await expect
+    .poll(() => page.evaluate(() => (window as any).candidateFrames.length))
+    .toBeGreaterThan(framesBefore);
+  expect(
+    await page.evaluate(
+      (count) => (window as any).candidateFrames.slice(count),
+      framesBefore,
+    ),
+  ).toEqual(["synthetic-second"]);
+  await waitForSettledWrites();
+  expect(await nativeMapSignature()).toEqual(secondMap);
   await page.evaluate(() => (window as any).emitScroll(0, 20));
+  await page.waitForTimeout(350);
+  await expect(page.locator(".navigation")).toHaveCount(0);
+  await page.evaluate(() => (window as any).emitScroll(3, 20));
   await expect(page.locator(".navigation")).toBeVisible();
   await expect(page.locator("#current-step-detail")).toContainText(
     "沿第二路线前行",
   );
   expect(routeCalls).toBe(2);
-  await expect
-    .poll(() => page.evaluate(() => (window as any).hudWriteCount))
-    .toBeGreaterThanOrEqual(beforeRestart + 4);
-  // A new navigation version clears the reselect message and re-enables the menu.
+  expect(await page.evaluate(() => (window as any).rebuildCalls)).toBe(1);
+  await waitForSettledWrites();
   await page.evaluate(() => (window as any).emitScroll(3));
-  await page.evaluate(() => (window as any).emitScroll(0));
-  await expect(page.locator(".full-itinerary")).toHaveAttribute("open", "");
-  await page.getByRole("button", { name: "结束", exact: true }).click();
+  await page.evaluate(() => (window as any).emitScroll(1));
+  await waitForSettledWrites();
+  await captureHud(".local/evidence/hud-menu-exit-native.png");
+  await page.evaluate(() => (window as any).emitScroll(0, 20));
+  expect(
+    await page.evaluate(() =>
+      (window as any).nativeLifecycle.filter((v: string) => v === "exit0"),
+    ),
+  ).toEqual([]);
+  await page.evaluate(() => (window as any).emitScroll(3, 20));
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).nativeLifecycle.filter((v: string) => v === "exit0"),
+      ),
+    )
+    .toEqual(["exit0"]);
+  expect(
+    await page.evaluate(() => (window as any).nativeLifecycle.slice(-2)),
+  ).toEqual(["stopGPS", "exit0"]);
   const endedCount = viewports.length;
   await page.evaluate(() => (window as any).emitScroll(1));
   expect(viewports).toHaveLength(endedCount);
