@@ -1,5 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
-import { EvenDevice, LatestFrameQueue, nativeFix } from "./device";
+import {
+  EvenDevice,
+  LatestFrameQueue,
+  nativeFix,
+  observePageCall,
+  type PageCallTrace,
+} from "./device";
 import { project, unproject } from "./map";
 import { staleInstruction } from "./freshness";
 import { getEvenBridge } from "./runtime";
@@ -8,6 +14,7 @@ import {
   RebuildPageContainer,
   validateEvenHubPageContainer,
   type EvenHubEvent,
+  type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
 import { renderHud, renderCompatibilityMap } from "./hud-renderer";
 
@@ -35,6 +42,126 @@ vi.mock("./hud-renderer", async (importOriginal) => {
 });
 
 describe("official SDK boundary and display queue", () => {
+  it("observes only safe page return shapes and forwards other methods and their receiver unchanged", async () => {
+    const secret = "never record this private value";
+    vi.stubGlobal("window", {
+      flutter_inappwebview: { callHandler: () => {} },
+      __EVEN_HUB_APP_ID__: secret,
+    });
+    try {
+      for (const [value, shape] of [
+        [undefined, "undefined"],
+        [null, "null"],
+        [false, "false"],
+        [true, "true"],
+        [0, "n0"],
+        [1, "n1"],
+        [3, "n3"],
+        [4, "number"],
+        [123456789, "number"],
+        [NaN, "number"],
+        [secret, "string"],
+        [{ secret }, "object"],
+      ] as const) {
+        const traces: PageCallTrace[] = [];
+        const payload = { secret };
+        const receivers: unknown[] = [];
+        const raw = vi.fn(async function (
+          this: unknown,
+          name: string,
+          params?: unknown,
+        ) {
+          receivers.push(this);
+          expect(params).toBe(payload);
+          return name === "createStartUpPageContainer" ? value : payload;
+        });
+        const bridge = { callEvenApp: raw } as unknown as EvenAppBridge;
+        const descriptor = Object.getOwnPropertyDescriptor(
+          bridge,
+          "callEvenApp",
+        );
+        const result = await observePageCall(bridge, "c", traces, async () => {
+          expect(await bridge.callEvenApp("getDeviceInfo", payload)).toBe(
+            payload,
+          );
+          return bridge.callEvenApp("createStartUpPageContainer", payload);
+        });
+        expect(result).toBe(value);
+        expect(receivers).toEqual([bridge, bridge]);
+        expect(Object.getOwnPropertyDescriptor(bridge, "callEvenApp")).toEqual(
+          descriptor,
+        );
+        expect(traces).toEqual([
+          {
+            tag: "c",
+            hooked: true,
+            dispatched: true,
+            raw: shape,
+            handlerCallable: true,
+            appIdPresent: true,
+            appIdType: "string",
+          },
+        ]);
+        expect(JSON.stringify(traces)).not.toContain(secret);
+        expect(JSON.stringify(traces)).not.toContain("123456789");
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+  it("distinguishes SDK no-dispatch from missing handler and restores inherited methods after rejection", async () => {
+    vi.stubGlobal("window", {});
+    try {
+      const original = vi.fn(async () => {
+        throw new Error("private native error");
+      });
+      const bridge = Object.create({ callEvenApp: original }) as EvenAppBridge;
+      const noDispatch: PageCallTrace[] = [];
+      expect(
+        await observePageCall(bridge, "c", noDispatch, async () => 1),
+      ).toBe(1);
+      expect(noDispatch[0]).toMatchObject({
+        hooked: true,
+        dispatched: false,
+        handlerCallable: false,
+        appIdPresent: false,
+      });
+      expect(Object.hasOwn(bridge, "callEvenApp")).toBe(false);
+      const thrown: PageCallTrace[] = [];
+      await expect(
+        observePageCall(bridge, "r", thrown, () =>
+          bridge.callEvenApp("rebuildPageContainer", {}),
+        ),
+      ).rejects.toThrow("private native error");
+      expect(thrown[0]).toMatchObject({ dispatched: true, raw: "throw" });
+      expect(JSON.stringify(thrown)).not.toContain("private");
+      expect(Object.hasOwn(bridge, "callEvenApp")).toBe(false);
+      expect(bridge.callEvenApp).toBe(original);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+  it("does not block an SDK operation whose call method cannot be instrumented", async () => {
+    const original = vi.fn(async () => 0);
+    const bridge = {} as EvenAppBridge;
+    Object.defineProperty(bridge, "callEvenApp", {
+      value: original,
+      writable: false,
+      configurable: false,
+    });
+    const traces: PageCallTrace[] = [];
+    expect(
+      await observePageCall(bridge, "c", traces, () =>
+        bridge.callEvenApp("createStartUpPageContainer"),
+      ),
+    ).toBe(0);
+    expect(traces[0]).toMatchObject({
+      hooked: false,
+      dispatched: false,
+      raw: "unobserved",
+    });
+    expect(bridge.callEvenApp).toBe(original);
+  });
   it("maps temple scrolls once per burst, ignores ring/IMU events, and preserves menu actions", async () => {
     let receive!: (event: EvenHubEvent) => void;
     const bridge = {

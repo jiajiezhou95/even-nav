@@ -176,3 +176,12 @@ User also authorized a bounded G2 XYZ capture. Manual diagnostics use the public
 - Only after B startup invalid plus B rebuild rejection, try the exact 0.1.7 native layout once. If accepted, send native current/next instruction, status, full attribution, maneuver icon and an aspect-preserving map. Success reports compatibility layout explicitly; B large-map acceptance remains unresolved.
 - Current 576x192 map is letterboxed to 288x144 (288x96 content), preserving its entire geographic view. No change to route queries, location, pairing, course or zoom behavior. All-layout rejection stays latched; exceptions and capacity errors do not create retry loops.
 - 20 targeted device tests and TypeScript PASS. Actual browser canvas check verifies all edges, 24px letterboxing and rejection of malformed/wrong-size images. Package build/privacy119files PASS. Private Beta build116744,81611bytes; download SHA256 matches `60bde4cfeb95b609cfeaa0fbf608d27506431d056abd0fd4896a7286adb69e74`. Real G2 display and lockscreen navigation remain WAITING_FOR_EXTERNAL_GATE; final clean acceptance/CI waits for hardware outcome. No new Google/Transitous calls or Worker deployment.
+
+
+### Beta 0.1.12 — distinguish SDK normalization from native page rejection
+
+- Hardware 0.1.11 FAIL: B create, B rebuild and exact-baseline rebuild all fail; user force-closed/reopened Even App and reproduced failure. The last-working layout fallback has not restored display.
+- Isolated installed-SDK 0.0.16 experiment shows startup maps undefined/null/booleans/object results to invalid(1); missing native handler resolves undefined. Rebuild preserves raw values except nullish-to-false. Prior descriptions of confirmed native rejection were too strong.
+- This candidate adds sanitized per-attempt page diagnostics only, preserving original arguments/results and retry bounds. It records dispatch, raw primitive type/limited value, handler-callable state and app-ID presence/type, never IDs or page content. It does not claim to fix display.
+- True native cause and hardware restoration remain WAITING_FOR_EXTERNAL_GATE. No Google/Transitous calls or Worker changes.
+- 23 targeted device tests and TypeScript PASS; build/privacy119files PASS. Private Beta build117112,82143bytes; downloaded package SHA256 `755eadcab15db9c814cb9edf9807b92ca4100168df0c1aec28278f8aaddbbc18` matches. Hardware diagnosis remains pending; no display repair claim.

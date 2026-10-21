@@ -35,6 +35,96 @@ export interface DisplayFailure {
   code: string;
   containerID?: number;
   at: number;
+  pageCalls?: PageCallTrace[];
+}
+export interface PageCallTrace {
+  tag: "c" | "r" | "k";
+  hooked: boolean;
+  dispatched: boolean;
+  raw: string;
+  handlerCallable: boolean;
+  appIdPresent: boolean;
+  appIdType: string;
+}
+function resultShape(value: unknown): string {
+  if (value === undefined) return "undefined";
+  if (value === null) return "null";
+  if (typeof value === "boolean") return String(value);
+  if (typeof value === "number")
+    return Number.isInteger(value) && value >= 0 && value <= 3
+      ? `n${value}`
+      : "number";
+  return typeof value;
+}
+/** Observe SDK dispatch/return shape only; never retain its payload or raw text. */
+export async function observePageCall<T>(
+  bridge: EvenAppBridge,
+  tag: PageCallTrace["tag"],
+  traces: PageCallTrace[],
+  operation: () => Promise<T>,
+): Promise<T> {
+  const environment =
+    typeof window === "undefined"
+      ? undefined
+      : (window as unknown as {
+          flutter_inappwebview?: { callHandler?: unknown };
+          __EVEN_HUB_APP_ID__?: unknown;
+        });
+  const trace: PageCallTrace = {
+    tag,
+    hooked: false,
+    dispatched: false,
+    raw: "unobserved",
+    handlerCallable:
+      typeof environment?.flutter_inappwebview?.callHandler === "function",
+    appIdPresent: Boolean(environment && "__EVEN_HUB_APP_ID__" in environment),
+    appIdType: typeof environment?.__EVEN_HUB_APP_ID__,
+  };
+  traces.push(trace);
+  const original = bridge.callEvenApp;
+  const descriptor = Object.getOwnPropertyDescriptor(bridge, "callEvenApp");
+  const method =
+    tag === "c" ? "createStartUpPageContainer" : "rebuildPageContainer";
+  const wrapped: EvenAppBridge["callEvenApp"] = async function (
+    this: EvenAppBridge,
+    name,
+    params,
+  ) {
+    if (name !== method) return original.call(this, name, params);
+    trace.dispatched = true;
+    try {
+      const value = await original.call(this, name, params);
+      trace.raw = resultShape(value);
+      return value;
+    } catch (error) {
+      trace.raw = "throw";
+      throw error;
+    }
+  };
+  if (typeof original === "function") {
+    try {
+      bridge.callEvenApp = wrapped;
+      trace.hooked = bridge.callEvenApp === wrapped;
+    } catch {
+      /* Read-only bridges still execute unchanged, marked unobserved. */
+    }
+  }
+  try {
+    return await operation();
+  } finally {
+    if (trace.hooked) {
+      if (descriptor) Object.defineProperty(bridge, "callEvenApp", descriptor);
+      else Reflect.deleteProperty(bridge, "callEvenApp");
+    }
+  }
+}
+function pageTraceText(traces: PageCallTrace[]): string {
+  return traces
+    .map(
+      (trace) =>
+        `${trace.tag}(h${Number(trace.handlerCallable)},id:${trace.appIdPresent ? trace.appIdType : "missing"}):${!trace.hooked ? "unobserved" : !trace.dispatched ? "no-dispatch" : trace.raw}`,
+    )
+    .join(";");
 }
 class DisplayError extends Error {
   constructor(
@@ -138,6 +228,7 @@ export class EvenDevice {
   private legacyTextValues = new Map<number, string>();
   private pageStarting?: Promise<void>;
   private pageFailure?: DisplayError;
+  private pageCalls: PageCallTrace[] = [];
   private version = 0;
   private lastScrollAt = -Infinity;
   connected = false;
@@ -221,6 +312,9 @@ export class EvenDevice {
           code: failure.code,
           containerID: failure.containerID,
           at: Date.now(),
+          ...(failure.stage === "PAGE"
+            ? { pageCalls: this.pageCalls.map((trace) => ({ ...trace })) }
+            : {}),
         };
         const label = {
           PAGE: "页面创建失败",
@@ -229,7 +323,7 @@ export class EvenDevice {
           TEXT: "文字传输失败",
         }[failure.stage];
         this.onHealth(
-          `G2 ${label} [${failure.stage}:${failure.code}${failure.containerID ? (this.compatibilityLayout ? `，容器 ${failure.containerID}` : `，块 ${failure.containerID}/4`) : ""}]${this.connected ? "；设备仍已连接" : "；设备已断开"}`,
+          `G2 ${label} [${failure.stage}:${failure.code}${failure.containerID ? (this.compatibilityLayout ? `，容器 ${failure.containerID}` : `，块 ${failure.containerID}/4`) : ""}]${failure.stage === "PAGE" ? ` [${pageTraceText(this.pageCalls)}]` : ""}${this.connected ? "；设备仍已连接" : "；设备已断开"}`,
         );
       },
     );
@@ -386,6 +480,7 @@ export class EvenDevice {
     });
   }
   private async createPage() {
+    this.pageCalls = [];
     const page = new CreateStartUpPageContainer({
       containerTotalNum: 5,
       imageObject: HUD_QUADRANTS.map(
@@ -422,7 +517,9 @@ export class EvenDevice {
     });
     let result;
     try {
-      result = await this.bridge!.createStartUpPageContainer(page);
+      result = await observePageCall(this.bridge!, "c", this.pageCalls, () =>
+        this.bridge!.createStartUpPageContainer(page),
+      );
     } catch (error) {
       throw new DisplayError("PAGE", `create-${exceptionCode(error)}`);
     }
@@ -431,8 +528,8 @@ export class EvenDevice {
       // Rebuild the identical page once; do not change geometry or guess a fallback.
       let rebuilt;
       try {
-        rebuilt = await this.bridge!.rebuildPageContainer(
-          new RebuildPageContainer(page),
+        rebuilt = await observePageCall(this.bridge!, "r", this.pageCalls, () =>
+          this.bridge!.rebuildPageContainer(new RebuildPageContainer(page)),
         );
       } catch (error) {
         throw new DisplayError(
@@ -443,8 +540,11 @@ export class EvenDevice {
       if (!rebuilt) {
         let compatible;
         try {
-          compatible = await this.bridge!.rebuildPageContainer(
-            this.compatibilityPage(),
+          compatible = await observePageCall(
+            this.bridge!,
+            "k",
+            this.pageCalls,
+            () => this.bridge!.rebuildPageContainer(this.compatibilityPage()),
           );
         } catch (error) {
           throw new DisplayError(
