@@ -156,6 +156,59 @@ async function menuDevice() {
 }
 
 describe("official SDK boundary and display queue", () => {
+  it("offers a token-bound transit action ahead of all static items and invalidates an open menu on phase change", async () => {
+    const { device, action, emit } = await menuDevice();
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    try {
+      const context = { routeId: "rail", version: 0, legIndex: 1 };
+      device.setTransitAction("BOARDED", context);
+      emit(3);
+      emit(0);
+      await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
+      expect(
+        vi
+          .mocked(renderHudMenuTile)
+          .mock.lastCall?.[2]?.map((item) => item.action),
+      ).toEqual([
+        "BOARDED",
+        "VIEW_ROUTE",
+        "ZOOM_IN",
+        "ZOOM_OUT",
+        "RESELECT_ROUTE",
+        "RETURN_NAVIGATION",
+        "EXIT_APP",
+      ]);
+      now.mockReturnValue(1400);
+      emit(3);
+      emit(3);
+      expect(action).toHaveBeenCalledExactlyOnceWith("BOARDED", context);
+      now.mockReturnValue(1800);
+      emit(3);
+      device.setTransitAction("ALIGHTED", { ...context, legIndex: 2 });
+      now.mockReturnValue(2200);
+      emit(3);
+      emit(0);
+      expect(action).toHaveBeenCalledTimes(1);
+      now.mockReturnValue(2600);
+      emit(3);
+      expect(action).toHaveBeenLastCalledWith("ALIGHTED", {
+        ...context,
+        legIndex: 2,
+      });
+      now.mockReturnValue(3000);
+      emit(3);
+      now.mockReturnValue(3400);
+      emit(1);
+      await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
+      expect(vi.mocked(renderHudMenuTile).mock.lastCall?.[0]).toBe(6);
+      device.setVersion(1);
+      now.mockReturnValue(3800);
+      emit(3);
+      expect(action).toHaveBeenCalledTimes(2);
+    } finally {
+      now.mockRestore();
+    }
+  });
   it("confirms exit once by double click, waits for GPS and the in-flight image before native shutdown", async () => {
     const { device, bridge, action, frame, emit } = await menuDevice();
     const now = vi.spyOn(Date, "now").mockReturnValue(1000);

@@ -19,6 +19,10 @@ import {
   type RouteChoiceAction,
 } from "./device";
 import { NavigationMap } from "./map";
+import {
+  availableTransitAction,
+  type TransitAction,
+} from "../../../packages/core/src/navigation";
 import { routeOverviewSteps } from "./route-overview";
 import { staleThreshold } from "./freshness";
 import { createCredentialStore, DeviceCredentials } from "./credentials";
@@ -27,6 +31,8 @@ import {
   currentStepDetail,
   guidanceView,
   hudStatus,
+  transitActionLabels,
+  transitPhaseDetail,
   type ManeuverIcon,
 } from "./guidance";
 import { maneuverSvg, maneuverPng } from "./maneuver-icons";
@@ -223,6 +229,21 @@ function itinerary(route: Route) {
     )
     .join("");
 }
+function transitRouteSummary(route: Route) {
+  const rides = route.legs.filter((leg) => leg.mode === "RIDE");
+  return {
+    lines: rides.map((leg) => leg.line || "公共交通").join(" → "),
+    transfers: rides.slice(1).filter((leg) => !leg.staySeated).length,
+    walking: route.legs
+      .filter((leg) => leg.mode === "WALK" || leg.mode === "TRANSFER")
+      .reduce((sum, leg) => sum + leg.distanceMeters, 0),
+  };
+}
+function glassesCandidateSummary(route: Route) {
+  return mode === "TRANSIT"
+    ? `${duration(route.durationSeconds)} · ${transitRouteSummary(route).transfers}换乘`
+    : `${duration(route.durationSeconds)} · ${distance(route.distanceMeters)}`;
+}
 function guidanceMarkup(state = session.snapshot) {
   const view = guidanceView(state, mode);
   return `<div class="guidance-current"><span id="nav-current-icon" class="maneuver-icon" data-icon="${view.icon}" aria-hidden="true">${maneuverSvg(view.icon)}</span><span><span id="nav-current-text">${escape(view.action)}</span><span id="nav-step-distance" >${escape(view.distance || "")}</span></span></div><div id="nav-next" class="guidance-next" ${view.next ? "" : "hidden"}><span class="next-label">下一步</span><span id="nav-next-icon" class="maneuver-icon" data-icon="${view.nextIcon || "none"}" aria-hidden="true">${maneuverSvg(view.nextIcon || "none")}</span><span id="nav-next-text">${escape(view.next || "")}</span></div>`;
@@ -243,6 +264,8 @@ function updateNavigationTelemetry(state = session.snapshot) {
   updateIcon("#nav-current-icon", view.icon);
   updateIcon("#nav-next-icon", view.nextIcon || "none");
   $("#current-step-detail").textContent = currentStepDetail(state);
+  $("#transit-phase-detail").textContent = transitPhaseDetail(state);
+  $("#transit-phase-detail").hidden = !transitPhaseDetail(state);
   $("#nav-distance").textContent = distance(state.remainingMeters);
   $("#nav-fix").hidden = !view.stale;
   $("#nav-replan").hidden = !state.replanNeeded;
@@ -255,6 +278,11 @@ function render() {
   renderMessage();
   $("#import").textContent = busy ? "处理中…" : "导入链接 ↗";
   const state = session.snapshot;
+  device.setTransitAction(availableTransitAction(state), {
+    routeId: state.route?.id || "",
+    version: state.version,
+    legIndex: state.legIndex,
+  });
   document.body.classList.toggle(
     "navigating",
     ["NAVIGATING", "ARRIVED"].includes(state.phase),
@@ -345,7 +373,8 @@ function render() {
       <p id="nav-fix" class="gps-status warning" ${view.stale ? "" : "hidden"}><span class="location-dot" aria-hidden="true"></span>更新定位中</p>
       <p id="nav-replan" class="warning" ${state.replanNeeded ? "" : "hidden"}>检测到偏航、路线过期或错过发车，请重新规划。</p>
       <div class="nav-actions"><button id="pause" class="secondary">${state.paused ? "继续" : "暂停"}</button><button id="replan" class="secondary">重新规划</button><button id="end" class="secondary danger">结束</button></div>
-      ${mode === "TRANSIT" && !state.paused ? `<div class="transit-actions">${leg?.mode === "WAIT" || (leg?.mode === "RIDE" && !state.boarded) ? '<button data-transit="BOARDED" class="secondary">已上车</button>' : ""}${leg?.mode === "RIDE" && state.boarded ? '<button data-transit="ALIGHTED" class="secondary">已下车</button>' : ""}${leg?.mode === "TRANSFER" ? '<button data-transit="TRANSFER_COMPLETED" class="secondary">已完成换乘</button>' : ""}</div>` : ""}
+      <p id="transit-phase-detail" ${transitPhaseDetail(state) ? "" : "hidden"}>${escape(transitPhaseDetail(state))}</p>
+      ${availableTransitAction(state) ? `<div class="transit-actions"><button data-transit="${availableTransitAction(state)}" class="secondary">${transitActionLabels[availableTransitAction(state)!]}</button></div>` : ""}
       <details><summary>当前步骤详情</summary><p id="current-step-detail">${escape(currentStepDetail(state))}</p></details><details class="full-itinerary"><summary>查看完整行程</summary><ol class="legs">${state.route ? itinerary(state.route) : ""}</ol></details></section>`;
   }
   if (state.phase === "ENDED")
@@ -433,18 +462,12 @@ function render() {
   $("#replan")?.addEventListener("click", () => void plan());
   document.querySelectorAll<HTMLButtonElement>("[data-transit]").forEach(
     (button) =>
-      (button.onclick = () => {
-        try {
-          session.confirmTransit(
-            button.dataset.transit as
-              "BOARDED" | "ALIGHTED" | "TRANSFER_COMPLETED",
-          );
-          render();
-          void drawMap();
-        } catch (e) {
-          report(e);
-        }
-      }),
+      (button.onclick = () =>
+        void handleAction(button.dataset.transit as TransitAction, {
+          routeId: state.route!.id,
+          version: state.version,
+          legIndex: state.legIndex,
+        })),
   );
 }
 function cancel() {
@@ -597,7 +620,7 @@ async function plan(fromGlasses = false) {
         device.showRouteChoices(
           response.routes.slice(0, 3).map((route) => ({
             id: route.id,
-            summary: `${duration(route.durationSeconds)} · ${distance(route.distanceMeters)}`,
+            summary: glassesCandidateSummary(route),
           })),
           selected,
           request.version,
@@ -683,6 +706,29 @@ async function stopNavigation(close: boolean) {
   if (close) await device.close();
 }
 async function handleAction(action: DeviceAction, choice?: RouteChoiceAction) {
+  if (Object.hasOwn(transitActionLabels, action)) {
+    const state = session.snapshot;
+    if (
+      busy ||
+      pageSuspended ||
+      imuBlocksNavigation() ||
+      !choice ||
+      choice.version !== state.version ||
+      choice.routeId !== state.route?.id ||
+      choice.legIndex !== state.legIndex ||
+      action !== availableTransitAction(state)
+    )
+      return;
+    try {
+      session.confirmTransit(action as TransitAction);
+      lastFrame = 0;
+      render();
+      await drawMap();
+    } catch (caught) {
+      report(caught);
+    }
+    return;
+  }
   if (action === "SELECT_ROUTE" || action === "START_ROUTE") {
     const state = session.snapshot;
     if (
@@ -832,6 +878,18 @@ async function drawMap() {
   const version = state.version;
   const overview = routeOverview;
   const selectionId = selected;
+  const currentPresentation = () => {
+    const current = session.snapshot;
+    return (
+      current.version === version &&
+      current.phase === state.phase &&
+      current.legIndex === state.legIndex &&
+      current.boarded === state.boarded &&
+      current.paused === state.paused &&
+      overview === routeOverview &&
+      (state.phase !== "ROUTE_SELECTION" || selectionId === selected)
+    );
+  };
   if (version !== previousMapVersion) {
     map.clear();
     previousMapVersion = version;
@@ -867,12 +925,7 @@ async function drawMap() {
             maxAgeMs: staleThreshold(mode),
           },
     );
-    if (
-      version !== session.snapshot.version ||
-      overview !== routeOverview ||
-      (state.phase === "ROUTE_SELECTION" && selectionId !== selected)
-    )
-      return;
+    if (!currentPresentation()) return;
     mapError = "";
     if (
       map.ready &&
@@ -891,8 +944,14 @@ async function drawMap() {
             sequence: ++sequence,
             version,
             pixels,
-            instruction: "选择路线 · 尚未开始导航",
-            status: "滑动选择 · 双击开始",
+            instruction:
+              mode === "TRANSIT" && route
+                ? `路线 ${state.routes.findIndex((item) => item.id === route.id) + 1} · ${transitRouteSummary(route).lines}`
+                : "选择路线 · 尚未开始导航",
+            status:
+              mode === "TRANSIT" && route
+                ? `步行 ${distance(transitRouteSummary(route).walking)} · ${transitRouteSummary(route).transfers}次换乘\n滑动选择 · 双击开始`
+                : "滑动选择 · 双击开始",
             attribution: map.attribution,
           },
           selectionId,
@@ -909,8 +968,7 @@ async function drawMap() {
       const pixels = await map.pixels();
       const icon = overview ? "none" : guidanceView(state, mode).icon;
       const iconPixels = await maneuverPng(icon);
-      if (version !== session.snapshot.version || overview !== routeOverview)
-        return;
+      if (!currentPresentation()) return;
       lastMapFrame = {
         version,
         pixels,
@@ -932,6 +990,7 @@ async function drawMap() {
       });
     }
   } catch (caught) {
+    if (!currentPresentation()) return;
     if (!(caught instanceof DOMException && caught.name === "AbortError")) {
       mapError =
         caught instanceof NavError
@@ -943,12 +1002,22 @@ async function drawMap() {
         lastMapFrame?.version === version &&
         version === session.snapshot.version
       ) {
+        const fallbackIcon = await maneuverPng("none");
+        if (!currentPresentation()) return;
         device.queue.push({
           sequence: ++sequence,
           version,
           pixels: lastMapFrame.pixels,
-          icon: { key: "none", pixels: await maneuverPng("none") },
+          icon: { key: "none", pixels: fallbackIcon },
           instruction: "地图更新失败，请以现场道路为准；暂停转向指示",
+          guidance:
+            mode === "TRANSIT" &&
+            ["WAIT", "RIDE", "TRANSFER"].includes(
+              session.snapshot.route?.legs[session.snapshot.legIndex]?.mode ||
+                "",
+            )
+              ? guidanceView(session.snapshot, mode)
+              : undefined,
           status: `保留旧图 · GPS ${lastMapFrame.fixTimestamp ? time(lastMapFrame.fixTimestamp) : "未知"} JST`,
           attribution: lastMapFrame.attribution,
         });

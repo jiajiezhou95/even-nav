@@ -471,7 +471,13 @@ export async function transitRoutes(
         valid = false;
         break;
       }
-      if (start > previous && !l.interlineWithPreviousLeg)
+      // WAIT is a boarding state. Gaps before walking must not strand the
+      // navigator waiting for a train before it can reach the station.
+      if (
+        start > previous &&
+        railModes.includes(l.mode) &&
+        !l.interlineWithPreviousLeg
+      )
         legs.push({
           mode: "WAIT",
           startTime: new Date(previous).toISOString(),
@@ -487,10 +493,17 @@ export async function transitRoutes(
         l.legGeometry.points,
         l.legGeometry.precision,
       );
+      const steps = (l.steps ?? []).map((s) => ({
+        instruction: `${Object.hasOwn(walkingActions, s.relativeDirection) ? walkingActions[s.relativeDirection] : "沿路线前进"}${s.streetName ? ` · ${s.streetName}` : ""}`,
+        maneuver: s.relativeDirection,
+        geometry: decodePolyline(s.polyline.points, s.polyline.precision),
+        distanceMeters: s.distance,
+        durationSeconds: 0,
+      }));
       if (
         walking &&
-        l.duration > 0 &&
-        (!l.steps?.length || geometry.length < 2)
+        ((l.duration > 0 && (!steps.length || geometry.length < 2)) ||
+          steps.some((s) => s.distanceMeters > 0 && s.geometry.length < 2))
       ) {
         valid = false;
         break;
@@ -522,13 +535,7 @@ export async function transitRoutes(
         platform: l.from.track,
         realtime: l.realTime,
         staySeated: l.interlineWithPreviousLeg,
-        steps: (l.steps ?? []).map((s) => ({
-          instruction: `${Object.hasOwn(walkingActions, s.relativeDirection) ? walkingActions[s.relativeDirection] : "沿路线前进"}${s.streetName ? ` · ${s.streetName}` : ""}`,
-          maneuver: s.relativeDirection,
-          geometry: decodePolyline(s.polyline.points, s.polyline.precision),
-          distanceMeters: s.distance,
-          durationSeconds: 0,
-        })),
+        steps,
       });
       previous = end;
     }
@@ -543,7 +550,9 @@ export async function transitRoutes(
       expiresAt: new Date(Date.now() + 60000).toISOString(),
       legs,
       distanceMeters: legs.reduce((n, l) => n + l.distanceMeters, 0),
-      durationSeconds: legs.reduce((n, l) => n + l.durationSeconds, 0),
+      // Include pre-walk gaps and onboard interline dwell without inventing
+      // boarding WAIT legs or changing provider timestamps/durations.
+      durationSeconds: (previous - Date.parse(t.departureTime)) / 1000,
       warnings: [
         "时刻与日本运营商覆盖尚需真实请求核验；无实时字段不代表准点。",
       ],

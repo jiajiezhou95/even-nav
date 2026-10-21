@@ -24,7 +24,8 @@ import {
   renderHud,
   renderCompatibilityMap,
 } from "./hud-renderer";
-import type { GuidanceView } from "./guidance";
+import { transitActionLabels, type GuidanceView } from "./guidance";
+import type { TransitAction } from "../../../packages/core/src/navigation";
 import { renderHudOverview } from "./hud-overview";
 import {
   HUD_MENU_ITEMS,
@@ -34,6 +35,7 @@ import {
   buildHudStepPages,
   type HudRouteStep,
   type HudStepPage,
+  type HudMenuItem,
   type HudRouteChoice,
 } from "./hud-menu";
 
@@ -84,10 +86,12 @@ export type DeviceAction =
   | "RESELECT_ROUTE"
   | "SELECT_ROUTE"
   | "START_ROUTE"
-  | "EXIT_APP";
+  | "EXIT_APP"
+  | TransitAction;
 export interface RouteChoiceAction {
   routeId: string;
   version: number;
+  legIndex?: number;
 }
 export interface DisplayFailure {
   stage: "PAGE" | "RENDER" | "IMAGE" | "TEXT";
@@ -310,6 +314,21 @@ export class EvenDevice {
   private latestFrame?: HudFrame;
   private menuOpen = false;
   private menuSelected = 0;
+  private transitConfirmation?: {
+    action: TransitAction;
+    context: RouteChoiceAction;
+  };
+  private menuItems(): readonly HudMenuItem[] {
+    return this.transitConfirmation
+      ? [
+          {
+            label: transitActionLabels[this.transitConfirmation.action],
+            action: this.transitConfirmation.action,
+          },
+          ...HUD_MENU_ITEMS,
+        ]
+      : HUD_MENU_ITEMS;
+  }
   private menuBackground?: Uint8Array;
   private requestingPresentation = false;
   private routeChoices?: {
@@ -362,6 +381,7 @@ export class EvenDevice {
                   await renderHudMenuTile(
                     this.menuSelected,
                     this.menuBackground,
+                    this.menuItems(),
                   ),
                 ]
               : this.routeChoices
@@ -528,6 +548,21 @@ export class EvenDevice {
       this.requestingPresentation = false;
     }
   }
+  setTransitAction(
+    action: TransitAction | undefined,
+    context: RouteChoiceAction,
+  ) {
+    const next = action ? { action, context } : undefined;
+    if (JSON.stringify(next) === JSON.stringify(this.transitConfirmation))
+      return;
+    this.transitConfirmation = next;
+    // Never reinterpret an already-open menu's selected action after the phase changes.
+    if (this.menuOpen) {
+      this.menuOpen = false;
+      this.menuSelected = 0;
+      this.redrawPresentation();
+    }
+  }
   showRouteChoices(
     items: HudRouteChoice[],
     selectedId: string,
@@ -602,6 +637,7 @@ export class EvenDevice {
     });
   }
   private resetPresentation() {
+    this.transitConfirmation = undefined;
     this.stepPages = [];
     this.overviewReady = false;
     this.overviewFrame = undefined;
@@ -964,14 +1000,16 @@ export class EvenDevice {
         )
           return;
         if (this.menuOpen) {
-          const action = HUD_MENU_ITEMS[this.menuSelected].action;
+          const action = this.menuItems()[this.menuSelected].action;
           this.menuOpen = false;
           if (action === "RETURN_NAVIGATION") {
             if (this.overview) this.onAction("EXIT_OVERVIEW");
             else this.redrawPresentation();
           } else {
             this.redrawPresentation();
-            this.onAction(action);
+            if (this.transitConfirmation?.action === action)
+              this.onAction(action, this.transitConfirmation.context);
+            else this.onAction(action);
           }
           return;
         }
@@ -1021,8 +1059,8 @@ export class EvenDevice {
         this.menuSelected =
           (this.menuSelected +
             (eventType === OsEventTypeList.SCROLL_TOP_EVENT ? -1 : 1) +
-            HUD_MENU_ITEMS.length) %
-          HUD_MENU_ITEMS.length;
+            this.menuItems().length) %
+          this.menuItems().length;
         this.redrawPresentation();
         return;
       }

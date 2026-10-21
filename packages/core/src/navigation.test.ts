@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   NavigationSession,
+  availableTransitAction,
   replayLocations,
   type LocationFix,
 } from "./navigation";
@@ -310,5 +311,150 @@ describe("current step remaining distance", () => {
     expect(s.snapshot.stepRemainingMeters).toBe(before);
     s.beginRequest("IMPORTING");
     expect(s.snapshot.stepRemainingMeters).toBe(0);
+  });
+});
+
+describe("door-to-door transit replay", () => {
+  it("clearing a missed departure preserves an earlier off-route replan request", () => {
+    const s = running(
+      route([
+        leg("WALK"),
+        { ...leg("RIDE"), startTime: new Date(now + 35000).toISOString() },
+      ]),
+    );
+    for (let seconds = 10; seconds <= 30; seconds += 10)
+      s.updateLocation(fix(seconds, 10, 20.001), now + seconds * 1000);
+    expect(s.snapshot.offRoute).toBe(true);
+    s.updateLocation(fix(40, 10.001), now + 40000);
+    expect(s.snapshot.offRoute).toBe(false);
+    expect(s.snapshot.replanNeeded).toBe(true);
+    s.refreshHealth(now + 41000);
+    s.confirmTransit("BOARDED");
+    expect(s.snapshot.replanNeeded).toBe(true);
+    s.refreshHealth(now + 42000);
+    expect(s.snapshot.replanNeeded).toBe(true);
+  });
+  it("rejects missing runtime confirmation without advancing a walking leg", () => {
+    const s = running();
+    // External event input must not match the absence of an available action.
+    // @ts-expect-error exercise malformed runtime input
+    expect(() => s.confirmTransit(undefined)).toThrow();
+    expect(s.snapshot.legIndex).toBe(0);
+    expect(s.snapshot.phase).toBe("NAVIGATING");
+  });
+  it.each([0, 1, 2, 4])(
+    "completes access, %i changes and final walk",
+    (changes) => {
+      const legs: RouteLeg[] = [leg("WALK")];
+      for (let i = 0; i <= changes; i++) {
+        legs.push(
+          { ...leg("WAIT"), distanceMeters: 0, geometry: [], steps: [] },
+          leg("RIDE"),
+        );
+        if (i < changes) legs.push(leg("TRANSFER"));
+      }
+      legs.push(leg("WALK"));
+      const s = running(route(legs));
+      s.updateLocation(fix(20, 10.001), now + 20000);
+      expect(availableTransitAction(s.snapshot)).toBe("BOARDED");
+      for (let i = 0; i <= changes; i++) {
+        s.confirmTransit("BOARDED");
+        expect(() => s.confirmTransit("BOARDED")).toThrow();
+        s.refreshHealth(now + 200000 + i * 1000);
+        expect(s.snapshot.locationStale).toBe(true);
+        expect(s.snapshot.boarded).toBe(true);
+        s.confirmTransit("ALIGHTED");
+        expect(s.snapshot.remainingMeters).toBe(
+          legs
+            .slice(s.snapshot.legIndex)
+            .reduce((n, l) => n + l.distanceMeters, 0),
+        );
+        if (i < changes) {
+          expect(availableTransitAction(s.snapshot)).toBe("TRANSFER_COMPLETED");
+          s.confirmTransit("TRANSFER_COMPLETED");
+          expect(() => s.confirmTransit("TRANSFER_COMPLETED")).toThrow();
+        }
+      }
+      expect(s.snapshot.route?.legs[s.snapshot.legIndex].mode).toBe("WALK");
+      expect(s.snapshot.phase).toBe("NAVIGATING");
+      expect(s.updateLocation(fix(21, 10.001), now + 300000)).toBe(false);
+      expect(s.snapshot.phase).toBe("NAVIGATING");
+      s.updateLocation(fix(301, 10.001), now + 301000);
+      expect(s.snapshot.phase).toBe("ARRIVED");
+      expect(s.snapshot.remainingMeters).toBe(0);
+    },
+  );
+  it("requires explicit through-service continuation without alighting or reboarding", () => {
+    const s = running(
+      route([
+        leg("RIDE"),
+        { ...leg("RIDE"), staySeated: true },
+        { ...leg("RIDE"), staySeated: true },
+        leg("WALK"),
+      ]),
+    );
+    s.confirmTransit("BOARDED");
+    for (let index = 0; index < 2; index++) {
+      expect(availableTransitAction(s.snapshot)).toBe("STAY_SEATED");
+      expect(() => s.confirmTransit("ALIGHTED")).toThrow();
+      s.refreshHealth(now + 500000);
+      expect(s.snapshot.legIndex).toBe(index);
+      s.confirmTransit("STAY_SEATED");
+      expect(s.snapshot.boarded).toBe(true);
+    }
+    expect(availableTransitAction(s.snapshot)).toBe("ALIGHTED");
+    s.confirmTransit("ALIGHTED");
+    expect(s.snapshot.boarded).toBe(false);
+    expect(s.snapshot.remainingMeters).toBe(111);
+  });
+  it("consecutive different trains still require alighting and new boarding", () => {
+    const s = running(route([leg("RIDE"), leg("RIDE")]));
+    s.confirmTransit("BOARDED");
+    s.confirmTransit("ALIGHTED");
+    expect(availableTransitAction(s.snapshot)).toBe("BOARDED");
+    expect(() => s.confirmTransit("ALIGHTED")).toThrow();
+    s.confirmTransit("BOARDED");
+    s.confirmTransit("ALIGHTED");
+    expect(s.snapshot.phase).toBe("ARRIVED");
+  });
+  it.each(["WALK", "TRANSFER", "RIDE"] as const)(
+    "detects an unboarded missed train from %s",
+    (mode) => {
+      const ride = {
+        ...leg("RIDE"),
+        startTime: new Date(now + 1000).toISOString(),
+      };
+      const s = running(route(mode === "RIDE" ? [ride] : [leg(mode), ride]));
+      s.refreshHealth(now + 2000);
+      expect(s.snapshot.replanNeeded).toBe(true);
+      expect(s.snapshot.boarded).toBe(false);
+    },
+  );
+  it("preview TTL does not expire an active ride and explicit boarding resolves missed departure", () => {
+    const r = route([
+      { ...leg("WAIT"), endTime: new Date(now + 1000).toISOString() },
+      { ...leg("RIDE"), startTime: new Date(now + 1000).toISOString() },
+    ]);
+    r.expiresAt = new Date(now + 60000).toISOString();
+    const s = running(r);
+    s.refreshHealth(now + 2000);
+    expect(s.snapshot.replanNeeded).toBe(true);
+    s.confirmTransit("BOARDED");
+    expect(s.snapshot.replanNeeded).toBe(false);
+    s.refreshHealth(now + 120000);
+    expect(s.snapshot.replanNeeded).toBe(false);
+    expect(s.snapshot.legIndex).toBe(1);
+    s.pause();
+    expect(availableTransitAction(s.snapshot)).toBeUndefined();
+    expect(() => s.confirmTransit("ALIGHTED")).toThrow();
+  });
+  it("GPS never completes a transfer, even at its end", () => {
+    const s = running(route([leg("TRANSFER"), leg("RIDE")]));
+    s.updateLocation(fix(20, 10.001), now + 20000);
+    expect(s.snapshot.legIndex).toBe(0);
+    expect(s.snapshot.progressMeters).toBeGreaterThan(100);
+    s.confirmTransit("TRANSFER_COMPLETED");
+    expect(s.snapshot.progressMeters).toBe(0);
+    expect(s.snapshot.remainingMeters).toBe(111);
   });
 });

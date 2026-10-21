@@ -6,6 +6,8 @@ import {
   currentStepDetail,
   estimatedArrival,
   hudStatus,
+  guidanceView,
+  transitPhaseDetail,
 } from "./guidance";
 import { geometryLength } from "../../../packages/core/src/geometry";
 
@@ -47,6 +49,52 @@ function start() {
   return session;
 }
 describe("compact structured navigation guidance", () => {
+  it("keeps line, direction, stops and provided platform visible through stale transit GPS", () => {
+    const state = start().snapshot;
+    const ride = {
+      ...state.route!.legs[0],
+      mode: "RIDE" as const,
+      line: "合成一号线",
+      headsign: "东站",
+      from: "甲站",
+      to: "乙站",
+      platform: "2",
+      steps: [],
+    };
+    state.route!.legs = [
+      { ...ride, mode: "WAIT" },
+      ride,
+      {
+        ...ride,
+        mode: "TRANSFER",
+        from: "乙站",
+        to: "丙站",
+        distanceMeters: 120,
+      },
+    ];
+    const view = guidanceView(state, "TRANSIT", now + 60000);
+    expect(view.action).toBe("候车 合成一号线");
+    expect(view.distance).toContain("东站");
+    expect(view.distance).toContain("2站台");
+    expect(view.next).toBe("上车 甲站");
+    expect(transitPhaseDetail(state)).toContain("下车站 乙站");
+    state.legIndex = 1;
+    state.boarded = true;
+    expect(guidanceView(state, "TRANSIT", now + 60000)).toMatchObject({
+      action: "乘坐 合成一号线",
+      next: "下车 乙站",
+      stale: true,
+    });
+    expect(hudStatus(state, "TRANSIT", now + 60000)).toContain("更新定位中");
+    expect(currentStepDetail(state)).toContain("方向 东站");
+    state.legIndex = 2;
+    expect(transitPhaseDetail(state)).toContain("换乘步行 120米");
+    state.route!.legs[2] = { ...ride, staySeated: true };
+    state.legIndex = 1;
+    expect(guidanceView(state, "TRANSIT", now)).toMatchObject({
+      next: "直通无需下车",
+    });
+  });
   it("estimates current step plus later steps and legs, not a fraction of whole-trip distance", () => {
     const state = start().snapshot;
     state.stepIndex = 1;

@@ -41,6 +41,23 @@ export interface NavigationState {
   paused: boolean;
   boarded: boolean;
 }
+export type TransitAction =
+  "BOARDED" | "ALIGHTED" | "TRANSFER_COMPLETED" | "STAY_SEATED";
+
+/** Only explicit confirmation establishes transit boundaries, including through service. */
+export function availableTransitAction(
+  state: NavigationState,
+): TransitAction | undefined {
+  if (state.phase !== "NAVIGATING" || state.paused) return undefined;
+  const leg = state.route?.legs[state.legIndex];
+  const next = state.route?.legs[state.legIndex + 1];
+  if (leg?.mode === "WAIT" && next?.mode === "RIDE") return "BOARDED";
+  if (leg?.mode === "TRANSFER") return "TRANSFER_COMPLETED";
+  if (leg?.mode !== "RIDE") return undefined;
+  if (!state.boarded) return "BOARDED";
+  return next?.mode === "RIDE" && next.staySeated ? "STAY_SEATED" : "ALIGHTED";
+}
+
 export interface NavigationConfig {
   staleMs: number;
   maxAccuracyMeters: number;
@@ -89,6 +106,8 @@ export class NavigationSession {
   private origin?: Coordinate;
   private farSamples = 0;
   private lastReplan = -Infinity;
+  private missedDeparture = false;
+  private offRouteReplanNeeded = false;
   readonly config: NavigationConfig;
   constructor(config: Partial<NavigationConfig> = {}) {
     this.config = { ...DEFAULT_NAVIGATION_CONFIG, ...config };
@@ -212,6 +231,8 @@ export class NavigationSession {
     };
     this.farSamples = 0;
     this.lastReplan = -Infinity;
+    this.missedDeparture = false;
+    this.offRouteReplanNeeded = false;
   }
   private validFix(fix: LocationFix, now: number): boolean {
     return (
@@ -229,11 +250,24 @@ export class NavigationSession {
     this.state.locationStale =
       !this.state.location ||
       now - this.state.location.timestamp > this.config.staleMs;
-    if (this.state.route && now >= Date.parse(this.state.route.expiresAt))
-      this.state.replanNeeded = true;
-    const leg = this.state.route?.legs[this.state.legIndex];
-    if (leg?.mode === "WAIT" && leg.endTime && now > Date.parse(leg.endTime))
-      this.state.replanNeeded = true;
+    // Provider TTL governs preview freshness, not a journey already underway.
+    if (this.state.phase === "NAVIGATING") {
+      if (this.missedDeparture)
+        this.state.replanNeeded = this.offRouteReplanNeeded;
+      const legs = this.state.route!.legs;
+      const leg = legs[this.state.legIndex];
+      const nextRide = legs
+        .slice(this.state.legIndex)
+        .find((item) => item.mode === "RIDE");
+      const departure =
+        nextRide?.startTime ?? (leg.mode === "WAIT" ? leg.endTime : undefined);
+      this.missedDeparture =
+        !this.state.boarded && !!departure && now > Date.parse(departure);
+      if (this.missedDeparture) this.state.replanNeeded = true;
+    } else if (this.state.phase === "ROUTE_SELECTION") {
+      if (this.state.routes.some((route) => now >= Date.parse(route.expiresAt)))
+        this.state.replanNeeded = true;
+    }
   }
   updateLocation(fix: LocationFix, now = Date.now()): boolean {
     this.refreshHealth(now);
@@ -276,6 +310,7 @@ export class NavigationSession {
       now - this.lastReplan >= this.config.replanCooldownMs
     ) {
       this.state.replanNeeded = true;
+      this.offRouteReplanNeeded = true;
       this.lastReplan = now;
     }
     if (far || !match) return true;
@@ -317,6 +352,9 @@ export class NavigationSession {
     this.state.boarded = false;
     this.state.progressMeters = 0;
     this.state.stepIndex = 0;
+    this.state.remainingMeters = this.state
+      .route!.legs.slice(this.state.legIndex)
+      .reduce((meters, leg) => meters + leg.distanceMeters, 0);
     this.state.stepRemainingMeters = firstStepMeters(
       this.state.route!.legs[this.state.legIndex],
     );
@@ -329,29 +367,24 @@ export class NavigationSession {
       this.controller.abort();
     }
   }
-  confirmTransit(action: "BOARDED" | "ALIGHTED" | "TRANSFER_COMPLETED"): void {
-    if (this.state.phase !== "NAVIGATING" || this.state.paused)
-      throw new NavError("INVALID_INPUT", "当前不在活动导航中");
-    const leg = this.state.route!.legs[this.state.legIndex];
-    if (
-      action === "BOARDED" &&
-      leg.mode === "WAIT" &&
-      this.state.route!.legs[this.state.legIndex + 1]?.mode === "RIDE"
-    ) {
-      this.advance();
-      this.state.boarded = true;
-    } else if (action === "BOARDED" && leg.mode === "RIDE")
-      this.state.boarded = true;
-    else if (
-      (action === "ALIGHTED" && leg.mode === "RIDE" && this.state.boarded) ||
-      (action === "TRANSFER_COMPLETED" && leg.mode === "TRANSFER")
-    )
-      this.advance();
-    else
+  confirmTransit(action: TransitAction): void {
+    if (!action || action !== availableTransitAction(this.state))
       throw new NavError(
         "INVALID_INPUT",
         "确认动作与当前行程阶段不匹配，请先确认上车",
       );
+    const leg = this.state.route!.legs[this.state.legIndex];
+    if (action === "BOARDED") {
+      if (leg.mode === "WAIT") this.advance();
+      this.state.boarded = true;
+    } else {
+      this.advance();
+      if (action === "STAY_SEATED") this.state.boarded = true;
+    }
+    if (this.state.boarded && this.missedDeparture) {
+      this.missedDeparture = false;
+      this.state.replanNeeded = this.offRouteReplanNeeded;
+    }
   }
   pause(): void {
     if (this.state.phase === "NAVIGATING") this.state.paused = true;

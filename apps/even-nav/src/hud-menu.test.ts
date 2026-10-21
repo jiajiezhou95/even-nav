@@ -31,6 +31,8 @@ describe("complete route overview text", () => {
         );
     }
     expect(pages.at(-1)?.lines).toContain("已到终点");
+    const rows = pages.flatMap((page) => page.lines);
+    expect(rows[rows.indexOf("步骤 2/2") - 1]).toBe("");
     expect(
       buildHudStepPages(
         [

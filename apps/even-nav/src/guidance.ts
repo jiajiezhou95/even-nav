@@ -1,4 +1,7 @@
-import type { NavigationState } from "../../../packages/core/src/navigation";
+import type {
+  NavigationState,
+  TransitAction,
+} from "../../../packages/core/src/navigation";
 import type { Mode } from "../../../packages/contracts/src/index";
 import { staleInstruction } from "./freshness";
 import { geometryLength } from "../../../packages/core/src/geometry";
@@ -51,6 +54,39 @@ function cue(maneuver: string | undefined): string | undefined {
   if (!maneuver || !Object.hasOwn(actions, maneuver)) return;
   return actions[maneuver];
 }
+export const transitActionLabels: Record<TransitAction, string> = {
+  BOARDED: "已上车",
+  ALIGHTED: "已下车",
+  TRANSFER_COMPLETED: "完成换乘",
+  STAY_SEATED: "确认直通",
+};
+
+export function transitPhaseDetail(state: NavigationState): string {
+  const leg = state.route?.legs[state.legIndex];
+  if (!leg) return "";
+  if (
+    leg.mode === "WALK" &&
+    state.route?.legs.some((item) => item.mode === "RIDE")
+  )
+    return `步行至${leg.to || "下一站点"} · 本段 ${Math.round(leg.distanceMeters)}米`;
+  if (!["WAIT", "RIDE", "TRANSFER"].includes(leg.mode)) return "";
+  const ride =
+    leg.mode === "WAIT" ? state.route?.legs[state.legIndex + 1] : leg;
+  const alighting = leg.mode === "WAIT" ? ride?.to : leg.to;
+  return [
+    leg.line || ride?.line,
+    (leg.headsign || ride?.headsign) &&
+      `方向 ${leg.headsign || ride?.headsign}`,
+    leg.from && `${leg.mode === "TRANSFER" ? "从" : "上车站 "}${leg.from}`,
+    alighting && `${leg.mode === "TRANSFER" ? "前往" : "下车站 "}${alighting}`,
+    (leg.platform || (leg.mode === "WAIT" ? ride?.platform : undefined)) &&
+      `${leg.platform || ride?.platform}站台`,
+    leg.mode === "TRANSFER" && `换乘步行 ${Math.round(leg.distanceMeters)}米`,
+    leg.staySeated && "直通无需下车",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
 export type ManeuverIcon =
   "none" | "straight" | "left" | "right" | "uturn" | "roundabout" | "transport";
 export function iconForManeuver(maneuver?: string): ManeuverIcon {
@@ -94,21 +130,52 @@ export function guidanceView(
     state.phase === "NAVIGATING" &&
     Boolean(staleInstruction(state.location?.timestamp, mode, now));
   if (!leg) return plain("等待选择路线");
-  if (leg.mode === "WAIT")
+  if (leg.mode === "WAIT") {
+    const ride = state.route?.legs[state.legIndex + 1];
     return {
-      ...plain(`候车${leg.line ? ` ${leg.line}` : ""}`),
+      ...plain(`候车 ${leg.line || ride?.line || "公共交通"}`),
       icon: "transport",
+      distance: [
+        leg.headsign || ride?.headsign,
+        (leg.platform || ride?.platform) &&
+          `${leg.platform || ride?.platform}站台`,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      next: `上车 ${leg.from || ride?.from || "请确认站名"}`,
       stale,
     };
+  }
   if (leg.mode === "RIDE")
     return {
-      ...plain(`乘坐 ${leg.line || "公共交通"}`),
+      ...plain(
+        `${state.boarded ? "乘坐" : "待上车"} ${leg.line || "公共交通"}`,
+      ),
       icon: "transport",
-      next: leg.to || leg.headsign || "请确认下车站",
+      distance: [
+        leg.headsign && `往${leg.headsign}`,
+        leg.platform && `${leg.platform}站台`,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      next:
+        state.boarded &&
+        state.route?.legs[state.legIndex + 1]?.mode === "RIDE" &&
+        state.route.legs[state.legIndex + 1].staySeated
+          ? "直通无需下车"
+          : `${state.boarded ? "下车" : "上车"} ${(state.boarded ? leg.to : leg.from) || "请确认站名"}`,
       stale,
     };
   if (leg.mode === "TRANSFER")
-    return { ...plain(`换乘${leg.to ? ` ${leg.to}` : ""}`), stale };
+    return {
+      ...plain(`换乘${leg.to ? ` ${leg.to}` : ""}`),
+      distance: `剩余 ${Math.round(Math.max(0, leg.distanceMeters - state.progressMeters))}米`,
+      next:
+        [leg.line, leg.platform && `${leg.platform}站台`]
+          .filter(Boolean)
+          .join(" · ") || "到达后确认完成换乘",
+      stale,
+    };
   const step = leg.steps[state.stepIndex];
   const maneuver = step?.maneuver;
   // A maneuver belongs to the start of its step. Remaining distance is to its END.
@@ -156,7 +223,8 @@ export function conciseInstruction(
 
 export function currentStepDetail(state: NavigationState): string {
   return (
-    state.route?.legs[state.legIndex]?.steps[state.stepIndex]?.instruction || ""
+    state.route?.legs[state.legIndex]?.steps[state.stepIndex]?.instruction ||
+    transitPhaseDetail(state)
   );
 }
 

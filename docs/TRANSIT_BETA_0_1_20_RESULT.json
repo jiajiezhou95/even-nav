@@ -1,0 +1,257 @@
+{
+  "evidence": "LIVE_PROVIDER_DEPLOYED_WORKER",
+  "departureTime": "2026-10-22T09:00:00+09:00",
+  "calls": 3,
+  "plannedCalls": 3,
+  "stoppedEarly": false,
+  "results": [
+    {
+      "name": "Shinjuku–Chofu",
+      "at": "2026-10-21T04:25:33.940Z",
+      "http": 200,
+      "status": "ROUTES_RETURNED",
+      "routes": [
+        {
+          "modes": [
+            "WALK",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "京王線 Keiō Line"
+          ],
+          "agencies": [
+            "京王電鉄 Keio Corporation"
+          ],
+          "transfers": 0,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "elapsedDurationMatches": true,
+          "waitsOnlyBeforeTrain": true,
+          "durationSeconds": 1920
+        },
+        {
+          "modes": [
+            "WALK",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "京王線 Keiō Line"
+          ],
+          "agencies": [
+            "京王電鉄 Keio Corporation"
+          ],
+          "transfers": 0,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "elapsedDurationMatches": true,
+          "waitsOnlyBeforeTrain": true,
+          "durationSeconds": 2280
+        },
+        {
+          "modes": [
+            "WALK",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "京王線 Keiō Line"
+          ],
+          "agencies": [
+            "京王電鉄 Keio Corporation"
+          ],
+          "transfers": 0,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "elapsedDurationMatches": true,
+          "waitsOnlyBeforeTrain": true,
+          "durationSeconds": 2880
+        }
+      ]
+    },
+    {
+      "name": "Tochomae–Daimon",
+      "at": "2026-10-21T04:25:35.260Z",
+      "http": 200,
+      "status": "ROUTES_RETURNED",
+      "routes": [
+        {
+          "modes": [
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "20220041",
+            "20209811",
+            "都営浅草線 Toei Asakusa Line"
+          ],
+          "agencies": [
+            "東京メトロ",
+            "東京メトロ",
+            "都営地下鉄 Toei Subway"
+          ],
+          "transfers": 2,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "elapsedDurationMatches": true,
+          "waitsOnlyBeforeTrain": true,
+          "durationSeconds": 2160
+        },
+        {
+          "modes": [
+            "WALK",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "3200601"
+          ],
+          "agencies": [
+            "都営地下鉄"
+          ],
+          "transfers": 0,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "elapsedDurationMatches": true,
+          "waitsOnlyBeforeTrain": true,
+          "durationSeconds": 2400
+        },
+        {
+          "modes": [
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "20220051",
+            "都営大江戸線 Toei Ōedo Line"
+          ],
+          "agencies": [
+            "東京メトロ",
+            "都営地下鉄 Toei Subway"
+          ],
+          "transfers": 1,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "elapsedDurationMatches": true,
+          "waitsOnlyBeforeTrain": true,
+          "durationSeconds": 2220
+        }
+      ]
+    },
+    {
+      "name": "Shimokitazawa–Oshiage",
+      "at": "2026-10-21T04:25:36.059Z",
+      "http": 200,
+      "status": "ROUTES_RETURNED",
+      "routes": [
+        {
+          "modes": [
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "京王井の頭線 Keiō Inokashira Line",
+            "925421",
+            "9484051",
+            "JR中央線快速 JR Chūō Rapid Line",
+            "JR中央・総武緩行線 JR Chūō-Sobu Local Line",
+            "東京メトロ半蔵門線 Tokyo Metro Hanzōmon Line"
+          ],
+          "agencies": [
+            "京王電鉄 Keio Corporation",
+            "京王電鉄",
+            "JR",
+            "JR東日本 JR East",
+            "JR東日本 JR East",
+            "東京メトロ Tokyo Metro"
+          ],
+          "transfers": 5,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "elapsedDurationMatches": true,
+          "waitsOnlyBeforeTrain": true,
+          "durationSeconds": 3300
+        },
+        {
+          "modes": [
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "402101",
+            "7981411",
+            "923691",
+            "東京メトロ半蔵門線 Tokyo Metro Hanzōmon Line"
+          ],
+          "agencies": [
+            "京王電鉄",
+            "小田急電鉄",
+            "京王電鉄",
+            "東京メトロ Tokyo Metro"
+          ],
+          "transfers": 3,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "elapsedDurationMatches": true,
+          "waitsOnlyBeforeTrain": true,
+          "durationSeconds": 3600
+        },
+        {
+          "modes": [
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "WAIT",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "402101",
+            "20209831",
+            "東京メトロ半蔵門線 Tokyo Metro Hanzōmon Line"
+          ],
+          "agencies": [
+            "京王電鉄",
+            "東京メトロ",
+            "東京メトロ Tokyo Metro"
+          ],
+          "transfers": 2,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "elapsedDurationMatches": true,
+          "waitsOnlyBeforeTrain": true,
+          "durationSeconds": 3960
+        }
+      ]
+    }
+  ]
+}

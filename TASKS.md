@@ -1,4 +1,12 @@
 # Requirement and evidence matrix
+
+## Current checkpoint — 2026-10-21
+
+- User accepts private Beta 0.1.19 walking UX and G2 display. Include blank lines between itinerary steps in next release without a separate user check.
+- Active 0.1.20 scope: walk → rail → any number of transfers → walk; explicit phone/G2 boarding, alighting, through-service and transfer actions; missed-departure handling; line/direction/platform context.
+- Provider evidence reused: ten public Tokyo ODs covered 0/1/2+ transfers. Changed normalization will receive targeted deterministic checks plus at most three fresh public requests, no retries/Google calls.
+- Walking hardware feedback is accepted; transit trip hardware and mode-specific 5/30/60-minute lockscreen checks remain NOT RUN. Earlier discovery rows below are historical, not current blockers.
+
 Source SHA256: A9A8649EE17BC583598F8DC42947B1B7CD3D69B7D2945CF5E5A311C8C343B753
 | Criterion | Required evidence | Current | Gap / next |
 |---|---|---|---|

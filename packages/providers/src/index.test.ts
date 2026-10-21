@@ -381,6 +381,114 @@ describe("providers", () => {
         ),
       ).rejects.toMatchObject({ code: "NO_ROUTE" });
   });
+  it("preserves elapsed time through onboard interline dwell without a boarding wait", async () => {
+    const routes = await transitRoutes(
+      { ...trip, mode: "TRANSIT", routeProvider: "TRANSITOUS" },
+      "test",
+      mock({
+        itineraries: [
+          {
+            duration: 540,
+            legs: [
+              leg("WALK", 0, 1),
+              leg("SUBWAY", 1, 3),
+              { ...leg("RAIL", 5, 8), interlineWithPreviousLeg: true },
+              leg("WALK", 8, 9),
+            ],
+          },
+        ],
+      }),
+    );
+    expect(routes[0].durationSeconds).toBe(540);
+    expect(routes[0].legs.map((l) => l.mode)).toEqual([
+      "WALK",
+      "RIDE",
+      "RIDE",
+      "WALK",
+    ]);
+    expect(routes[0].legs[2]).toMatchObject({
+      staySeated: true,
+      startTime: leg("RAIL", 5, 8).startTime,
+      durationSeconds: 180,
+    });
+  });
+  it("leaves gapped access and transfer walks reachable with waits only before boarding", async () => {
+    const routes = await transitRoutes(
+      { ...trip, mode: "TRANSIT", routeProvider: "TRANSITOUS" },
+      "test",
+      mock({
+        itineraries: [
+          {
+            duration: 900,
+            legs: [
+              leg("WALK", 2, 3),
+              leg("SUBWAY", 4, 6),
+              leg("WALK", 8, 9),
+              leg("RAIL", 10, 12),
+              leg("WALK", 14, 15),
+            ],
+          },
+        ],
+      }),
+    );
+    const route = routes[0];
+    expect(route.legs.map((l) => l.mode)).toEqual([
+      "WALK",
+      "WAIT",
+      "RIDE",
+      "TRANSFER",
+      "WAIT",
+      "RIDE",
+      "WALK",
+    ]);
+    expect(route.durationSeconds).toBe(900);
+    expect(route.legs[0].startTime).toBe(leg("WALK", 2, 3).startTime);
+    expect(route.legs[3].startTime).toBe(leg("WALK", 8, 9).startTime);
+    expect(route.legs[3].durationSeconds).toBe(60);
+  });
+  it.each(["", "??"])(
+    "rejects positive-distance walking steps with unusable geometry %j",
+    async (points) => {
+      const walk = leg("WALK", 0, 1);
+      walk.steps![0].polyline.points = points;
+      await expect(
+        transitRoutes(
+          { ...trip, mode: "TRANSIT", routeProvider: "TRANSITOUS" },
+          "test",
+          mock({
+            itineraries: [
+              {
+                duration: 240,
+                legs: [walk, leg("SUBWAY", 1, 3), leg("WALK", 3, 4)],
+              },
+            ],
+          }),
+        ),
+      ).rejects.toMatchObject({ code: "NO_ROUTE" });
+    },
+  );
+  it("retains zero-distance walking turn markers alongside usable walking steps", async () => {
+    const walk = leg("WALK", 0, 1);
+    walk.steps!.push({
+      relativeDirection: "LEFT",
+      streetName: "",
+      distance: 0,
+      polyline: { points: "??", precision: 5 },
+    });
+    const routes = await transitRoutes(
+      { ...trip, mode: "TRANSIT", routeProvider: "TRANSITOUS" },
+      "test",
+      mock({
+        itineraries: [
+          {
+            duration: 240,
+            legs: [walk, leg("SUBWAY", 1, 3), leg("WALK", 3, 4)],
+          },
+        ],
+      }),
+    );
+    expect(routes[0].legs[0].steps).toHaveLength(2);
+  });
   it("rejects all-walk itinerary in transit", async () =>
     expect(
       transitRoutes(

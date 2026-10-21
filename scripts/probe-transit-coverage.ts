@@ -26,7 +26,11 @@ const selected = process.argv
   ?.slice(7);
 const activeCases = selected
   ? cases.filter(([name]) => name === selected)
-  : cases;
+  : process.argv.includes("--transit-beta")
+    ? ["Shinjuku–Chofu", "Tochomae–Daimon", "Shimokitazawa–Oshiage"].map(
+        (name) => cases.find(([candidate]) => candidate === name)!,
+      )
+    : cases;
 if (!activeCases.length) throw new Error("Unknown public test case");
 console.log(
   JSON.stringify({
@@ -105,7 +109,26 @@ for (const [name, origin, destination] of activeCases) {
                 ["WALK", "TRANSFER"].includes(leg.mode) &&
                 leg.durationSeconds > 0,
             )
-            .every((leg) => leg.steps.length > 0 && leg.geometry.length >= 2),
+            .every(
+              (leg) =>
+                leg.steps.length > 0 &&
+                leg.geometry.length >= 2 &&
+                leg.steps.every(
+                  (step) =>
+                    step.distanceMeters <= 0 || step.geometry.length >= 2,
+                ),
+            ),
+          elapsedDurationMatches:
+            Math.abs(
+              route.durationSeconds -
+                (Date.parse(route.legs.at(-1)?.endTime ?? "") -
+                  Date.parse(departureTime)) /
+                  1000,
+            ) <= 1,
+          waitsOnlyBeforeTrain: route.legs.every(
+            (leg, index) =>
+              leg.mode !== "WAIT" || route.legs[index + 1]?.mode === "RIDE",
+          ),
           durationSeconds: route.durationSeconds,
         };
       }),
@@ -123,9 +146,11 @@ for (const [name, origin, destination] of activeCases) {
   }
   results.push(result);
   writeFileSync(
-    selected
-      ? "docs/TRANSIT_IDENTITY_RESULT.json"
-      : "docs/TRANSIT_COVERAGE_RESULT.json",
+    process.argv.includes("--transit-beta")
+      ? "docs/TRANSIT_BETA_0_1_20_RESULT.json"
+      : selected
+        ? "docs/TRANSIT_IDENTITY_RESULT.json"
+        : "docs/TRANSIT_COVERAGE_RESULT.json",
     JSON.stringify(
       {
         evidence: "LIVE_PROVIDER_DEPLOYED_WORKER",

@@ -2025,3 +2025,412 @@ test("SDK scroll gestures zoom the active map without rerouting and ignore non-n
   await page.evaluate(() => (window as any).emitScroll(1));
   expect(viewports).toHaveLength(endedCount);
 });
+
+for (const transfers of [0, 1, 2])
+  test(`TRANSIT glasses double confirmations complete ${transfers} transfers with final walking`, async ({
+    page,
+  }) => {
+    let transitRequests = 0;
+    await page.route("https://worker.test/v1/routes/transit", (route) => {
+      transitRequests++;
+      const request = route.request().postDataJSON();
+      const point = (offset: number) => ({
+        lat: request.origin.lat,
+        lng: request.origin.lng + offset,
+      });
+      const legs: any[] = [];
+      const add = (mode: string, from: any, to: any, fields: any = {}) =>
+        legs.push({
+          mode,
+          geometry: [from, to],
+          distanceMeters: mode === "WAIT" ? 0 : mode === "RIDE" ? 900 : 100,
+          durationSeconds: mode === "RIDE" ? 300 : 60,
+          steps:
+            mode === "WALK"
+              ? [
+                  {
+                    instruction: "沿人行道前往合成站点",
+                    geometry: [from, to],
+                    distanceMeters: 100,
+                    durationSeconds: 60,
+                  },
+                ]
+              : [],
+          ...fields,
+        });
+      let current = point(0.001);
+      add("WALK", request.origin, current, { to: "合成甲站" });
+      for (let i = 0; i <= transfers; i++) {
+        const stop = point(0.003 + i * 0.003);
+        const detail = {
+          line: `合成${i + 1}号线`,
+          headsign: `方向${i + 1}站`,
+          from: `合成${i + 1}上车站`,
+          to: `合成${i + 1}下车站`,
+          platform: String(i + 1),
+        };
+        add("WAIT", current, current, detail);
+        add("RIDE", current, stop, detail);
+        current = stop;
+        if (i < transfers) {
+          const next = point(0.0035 + i * 0.003);
+          add("TRANSFER", current, next, {
+            from: detail.to,
+            to: `合成${i + 2}上车站`,
+            line: `合成${i + 2}号线`,
+            platform: String(i + 2),
+          });
+          current = next;
+        }
+      }
+      add("WALK", current, request.destination.coordinate, {
+        to: "最终目的地",
+      });
+      return route.fulfill({
+        json: {
+          requestVersion: request.requestVersion,
+          routes: [
+            {
+              id: `transit-${transfers}`,
+              provider: "TRANSITOUS",
+              basemapProvider: "GOOGLE_TILES",
+              fetchedAt: new Date().toISOString(),
+              expiresAt: new Date(Date.now() + 3600000).toISOString(),
+              distanceMeters: legs.reduce((n, l) => n + l.distanceMeters, 0),
+              durationSeconds: legs.reduce((n, l) => n + l.durationSeconds, 0),
+              warnings: [],
+              attribution: ["Synthetic Transit"],
+              legs,
+            },
+          ],
+        },
+      });
+    });
+    await page.route("**/src/runtime.ts", (route) =>
+      route.fulfill({
+        contentType: "application/javascript",
+        body: `export const isEvenHost=()=>Boolean(window.mockNative); export const getEvenBridge=async()=>window.mockBridge;`,
+      }),
+    );
+    await page.reload();
+    const png = await page.evaluate(() => {
+      const c = document.createElement("canvas");
+      c.width = c.height = 512;
+      c.getContext("2d")!.fillRect(0, 0, 512, 512);
+      return c.toDataURL().split(",")[1];
+    });
+    await page.route("https://worker.test/v1/maps/**", (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname.endsWith("/session")) {
+        const size =
+          route.request().postDataJSON()?.display === "G2" ? 512 : 256;
+        return route.fulfill({
+          json: {
+            session: `synthetic-${size}`,
+            expiry: String(Math.floor(Date.now() / 1000) + 3600),
+            tileWidth: size,
+            tileHeight: size,
+          },
+        });
+      }
+      if (url.pathname.endsWith("/viewport"))
+        return route.fulfill({ json: { copyright: "Synthetic transit map" } });
+      return route.fulfill({
+        contentType: "image/png",
+        body: Buffer.from(png, "base64"),
+      });
+    });
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    await pairForImu(page);
+    await page.evaluate(async () => {
+      const main = await (await fetch("/src/main.ts")).text();
+      const corePath = main.match(
+        /from\s+["']([^"']*packages\/core\/src\/navigation[^"']*)["']/,
+      )![1];
+      const { NavigationSession } = await import(corePath);
+      const start = NavigationSession.prototype.start;
+      NavigationSession.prototype.start = function (...args: any[]) {
+        (window as any).navSession = this;
+        return start.apply(this, args);
+      };
+      const devicePath = "/src/device.ts";
+      const { LatestFrameQueue } = await import(devicePath);
+      const push = LatestFrameQueue.prototype.push;
+      (window as any).phaseFrames = [];
+      LatestFrameQueue.prototype.push = function (frame: any) {
+        if (frame.guidance) {
+          (window as any).lastFrame = frame;
+          (window as any).phaseFrames.push({
+            leg: (window as any).navSession?.snapshot.legIndex,
+            action: frame.guidance.action,
+          });
+        }
+        return push.call(this, frame);
+      };
+      const mapPath = "/src/map.ts";
+      const { NavigationMap } = await import(mapPath);
+      const draw = NavigationMap.prototype.draw;
+      NavigationMap.prototype.draw = async function (...args: any[]) {
+        const result = await draw.apply(this, args);
+        if (
+          (window as any).holdWalkMap &&
+          (window as any).navSession?.snapshot.phase === "NAVIGATING" &&
+          args[4]?.length === 0
+        ) {
+          (window as any).holdWalkMap = false;
+          await new Promise<void>((resolve) => {
+            (window as any).releaseWalkMap = resolve;
+          });
+        }
+        return result;
+      };
+      let eventListener: any;
+      let fixListener: any;
+      let last = -Infinity;
+      (window as any).hudImages = {};
+      (window as any).mockNative = true;
+      (window as any).emitGesture = async (type: number, count = 1) => {
+        while (Date.now() - last < 350)
+          await new Promise((resolve) =>
+            setTimeout(resolve, 350 - (Date.now() - last)),
+          );
+        for (let i = 0; i < count; i++)
+          eventListener?.({ sysEvent: { eventType: type, eventSource: 1 } });
+        last = Date.now();
+      };
+      (window as any).emitFix = (coordinate: any) =>
+        fixListener?.({
+          latitude: coordinate.lat,
+          longitude: coordinate.lng,
+          timestamp: Date.now(),
+          accuracy: 5,
+        });
+      (window as any).mockBridge = {
+        getDeviceInfo: async () => ({
+          model: "g2",
+          status: { connectType: "connected" },
+        }),
+        onDeviceStatusChanged: () => () => {},
+        onEvenHubEvent: (callback: any) => {
+          eventListener = callback;
+          return () => {};
+        },
+        getAppLocation: async () => ({
+          latitude: 35.6812,
+          longitude: 139.7671,
+          timestamp: Date.now(),
+          accuracy: 5,
+        }),
+        onAppLocationChanged: (callback: any) => {
+          fixListener = callback;
+          return () => {};
+        },
+        startAppLocationUpdates: async () => true,
+        stopAppLocationUpdates: async () => true,
+        createStartUpPageContainer: async () => 0,
+        rebuildPageContainer: async () => true,
+        updateImageRawData: async (value: any) => {
+          (window as any).hudImages[value.containerID] = value.imageData;
+          return "success";
+        },
+        shutDownPageContainer: async () => true,
+      };
+      (window as any).waitForTransitFrame = async () => {
+        const path = "/src/hud-renderer.ts";
+        const { renderHud } = await import(path);
+        for (let i = 0; i < 150; i++) {
+          const frame = (window as any).lastFrame;
+          if (frame) {
+            const expected = await renderHud(frame);
+            if (
+              expected.every(
+                (bytes: Uint8Array, index: number) =>
+                  JSON.stringify(Array.from(bytes)) ===
+                  JSON.stringify((window as any).hudImages[index + 1]),
+              )
+            )
+              return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        throw new Error("Transit guidance did not reach native display");
+      };
+    });
+    await page.getByRole("button", { name: "连接 Even App / G2" }).click();
+    await page.getByLabel("GOOGLE MAPS 分享链接").fill(link);
+    await page.getByRole("button", { name: /导入链接/ }).click();
+    await page.getByRole("button", { name: "公共交通", exact: true }).click();
+    await page.getByRole("button", { name: "确认目的地，查询路线" }).click();
+    await expect(page.locator(".route-summary-line")).toContainText(
+      `${transfers} 次换乘`,
+    );
+    if (transfers === 2)
+      await page.evaluate(() => {
+        (window as any).holdWalkMap = true;
+      });
+    await page.getByRole("button", { name: "开始导航 ↗" }).click();
+    const snapshot = () =>
+      page.evaluate(() => {
+        const s = (window as any).navSession.snapshot;
+        return {
+          leg: s.legIndex,
+          mode: s.route.legs[s.legIndex].mode,
+          phase: s.phase,
+          boarded: s.boarded,
+        };
+      });
+    await expect.poll(async () => (await snapshot()).mode).toBe("WALK");
+    if (transfers === 2)
+      await expect
+        .poll(() => page.evaluate(() => typeof (window as any).releaseWalkMap))
+        .toBe("function");
+    const advanceWalk = () =>
+      page.evaluate(() => {
+        const s = (window as any).navSession.snapshot;
+        (window as any).emitFix(s.route.legs[s.legIndex].geometry.at(-1));
+      });
+    await advanceWalk();
+    await expect.poll(async () => (await snapshot()).mode).toBe("WAIT");
+    if (transfers === 2) {
+      await page.evaluate(() => (window as any).releaseWalkMap());
+      await expect
+        .poll(() =>
+          page.evaluate(() => (window as any).lastFrame?.guidance.action),
+        )
+        .toBe("候车 合成1号线");
+      expect(
+        await page.evaluate(() =>
+          (window as any).phaseFrames.filter(
+            (frame: any) => frame.leg === 1 && frame.action.includes("沿路线"),
+          ),
+        ),
+      ).toEqual([]);
+    }
+    await page.clock.install();
+    await page.clock.fastForward(60000);
+    await expect(page.locator("#nav-current-text")).toContainText(
+      "候车 合成1号线",
+    );
+    await expect(page.locator("#transit-phase-detail")).toContainText(
+      "方向 方向1站",
+    );
+    await expect(page.locator("#transit-phase-detail")).toContainText("1站台");
+    const saveNative = async (path: string) => {
+      const image = await page.evaluate(async () => {
+        const c = document.createElement("canvas");
+        c.width = 576;
+        c.height = 288;
+        for (let j = 0; j < 4; j++) {
+          const b = await createImageBitmap(
+            new Blob([new Uint8Array((window as any).hudImages[j + 1])], {
+              type: "image/png",
+            }),
+          );
+          c.getContext("2d")!.drawImage(
+            b,
+            (j % 2) * 288,
+            Math.floor(j / 2) * 144,
+          );
+          b.close();
+        }
+        return c.toDataURL().split(",")[1];
+      });
+      await writeFile(path, Buffer.from(image, "base64"));
+    };
+    const confirm = async (action: string) => {
+      await expect(page.locator(`[data-transit="${action}"]`)).toBeVisible();
+      const before = await snapshot();
+      if (transfers === 2 && action === "BOARDED" && before.leg === 1)
+        await page.evaluate(() => (window as any).waitForTransitFrame());
+      const menuBackground = await page.evaluate(
+        () => (window as any).hudImages[2],
+      );
+      await page.evaluate(() => (window as any).emitGesture(3, 20));
+      if (transfers === 2 && action === "BOARDED" && before.leg === 1) {
+        await page.evaluate(async (background) => {
+          const path = "/src/hud-menu.ts";
+          const { renderHudMenuTile, HUD_MENU_ITEMS } = await import(path);
+          const bytes = await renderHudMenuTile(0, new Uint8Array(background), [
+            { label: "已上车", action: "BOARDED" },
+            ...HUD_MENU_ITEMS,
+          ]);
+          for (let i = 0; i < 100; i++) {
+            if (
+              JSON.stringify(Array.from(bytes)) ===
+              JSON.stringify((window as any).hudImages[2])
+            )
+              return;
+            await new Promise((resolve) => setTimeout(resolve, 20));
+          }
+          throw new Error("Transit menu did not reach h1");
+        }, menuBackground);
+        await saveNative(".local/evidence/hud-transit-board-menu-native.png");
+      }
+      await page.evaluate(() => (window as any).emitGesture(0, 20));
+      expect(await snapshot()).toEqual(before);
+      await page.evaluate(() => (window as any).emitGesture(3, 20));
+      await expect.poll(snapshot).not.toEqual(before);
+    };
+    for (let i = 0; i <= transfers; i++) {
+      await confirm("BOARDED");
+      await expect.poll(async () => (await snapshot()).boarded).toBe(true);
+      await expect(page.locator("#nav-current-text")).toContainText(
+        `乘坐 合成${i + 1}号线`,
+      );
+      await expect(page.locator("#nav-next-text")).toContainText(
+        `下车 合成${i + 1}下车站`,
+      );
+      // A station GPS fix alone must never establish alighting.
+      await page.clock.fastForward(10000);
+      await advanceWalk();
+      await expect.poll(async () => (await snapshot()).mode).toBe("RIDE");
+      if (transfers === 2 && i === 0) {
+        await page.evaluate(() => (window as any).waitForTransitFrame());
+        const image = await page.evaluate(async () => {
+          const c = document.createElement("canvas");
+          c.width = 576;
+          c.height = 288;
+          for (let j = 0; j < 4; j++) {
+            const b = await createImageBitmap(
+              new Blob([new Uint8Array((window as any).hudImages[j + 1])], {
+                type: "image/png",
+              }),
+            );
+            c.getContext("2d")!.drawImage(
+              b,
+              (j % 2) * 288,
+              Math.floor(j / 2) * 144,
+            );
+            b.close();
+          }
+          return c.toDataURL().split(",")[1];
+        });
+        await writeFile(
+          ".local/evidence/hud-transit-ride-native.png",
+          Buffer.from(image, "base64"),
+        );
+      }
+      await confirm("ALIGHTED");
+      if (i < transfers) {
+        await expect.poll(async () => (await snapshot()).mode).toBe("TRANSFER");
+        if (transfers === 2 && i === 0) {
+          await page.evaluate(() => (window as any).waitForTransitFrame());
+          await saveNative(".local/evidence/hud-transit-transfer-native.png");
+          await page.screenshot({
+            path: ".local/evidence/transit-phone-transfer.png",
+          });
+        }
+        await confirm("TRANSFER_COMPLETED");
+        await expect.poll(async () => (await snapshot()).mode).toBe("WAIT");
+      }
+    }
+    await expect.poll(async () => (await snapshot()).mode).toBe("WALK");
+    await expect(page.locator("#transit-phase-detail")).toContainText(
+      "最终目的地",
+    );
+    // Respect the existing walking speed and geometry-match window instead of teleporting.
+    await page.clock.fastForward(180000);
+    await advanceWalk();
+    await expect.poll(async () => (await snapshot()).phase).toBe("ARRIVED");
+    expect(transitRequests).toBe(1);
+  });

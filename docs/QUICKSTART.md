@@ -45,3 +45,9 @@ The lower-right HUD shows total remaining distance, phone-local current time and
 The phone accepts Google Maps place or route share links only. Manual address/coordinate entry and destination map picking are removed. Every route query uses the current phone location; any original start point in the shared link is not selectable as the navigation origin.
 
 Exit Plugin is the last menu item and also requires double-tap confirmation. It stops app navigation/location activity and requests the official Even SDK immediate exit (`shutDownPageContainer(0)`). Host closure on iPhone/G2 must be verified on hardware; a native failure must not be labelled successful exit.
+
+### Rail journeys (0.1.20)
+
+Paste a Google Maps destination, select 公共交通, choose a departure time and route, then start from the current phone location. Walk to the boarding stop. When actually on the train, double-tap to open the glasses menu and double-tap its first item 已上车 (or use the matching phone button). The menu action changes to 已下车. Confirm only after getting off; walk the transfer segment and choose 完成换乘 at its end, then confirm boarding the next train. Repeat for further transfers and finish the last walk. Through service uses 确认直通 and keeps the boarded state, without asking you to get off.
+
+Line, direction, boarding/alighting stops and platform are shown when supplied. Some services return numeric labels or omit platforms. No missing value is invented. Underground GPS loss retains the last location and transit phase; GPS/timetables never automatically confirm boarding or alighting. A missed departure prompts replanning; available schedules are not proof of actual train arrival. Steps in the full-screen itinerary are separated by a blank line. Transit hardware and lockscreen observations are still required separately.

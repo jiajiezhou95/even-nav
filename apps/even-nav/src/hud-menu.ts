@@ -1,4 +1,5 @@
 import { HUD_QUADRANTS } from "./hud-renderer";
+import type { TransitAction } from "../../../packages/core/src/navigation";
 
 export const HUD_MENU_ITEMS = [
   { label: "查看路线", action: "VIEW_ROUTE" },
@@ -8,6 +9,10 @@ export const HUD_MENU_ITEMS = [
   { label: "返回导航", action: "RETURN_NAVIGATION" },
   { label: "退出插件", action: "EXIT_APP" },
 ] as const;
+export interface HudMenuItem {
+  label: string;
+  action: (typeof HUD_MENU_ITEMS)[number]["action"] | TransitAction;
+}
 
 export interface HudRouteChoice {
   id: string;
@@ -54,6 +59,8 @@ export function buildHudStepPages(
       line += char;
     }
     if (line || !lines.length) lines.push(line);
+    if (index > 0)
+      all.push({ text: "", step: index + 1, current: step.current });
     all.push({
       text: `步骤 ${index + 1}/${steps.length}${step.current ? " · 当前" : ""}`,
       step: index + 1,
@@ -147,6 +154,7 @@ export async function renderHudListTile(
 export async function renderHudMenuTile(
   selected: number,
   background?: Uint8Array,
+  items: readonly HudMenuItem[] = HUD_MENU_ITEMS,
 ) {
   const canvas = document.createElement("canvas");
   canvas.width = 288;
@@ -166,11 +174,15 @@ export async function renderHudMenuTile(
   ctx.fillStyle = "#fff";
   ctx.textBaseline = "middle";
   ctx.font = '20px "Microsoft YaHei", "PingFang SC", sans-serif';
-  HUD_MENU_ITEMS.forEach((item, index) => {
+  const first = Math.max(0, selected - 5);
+  items.slice(first, first + 6).forEach((item, index) => {
     const y = 17 + index * 22;
-    if (index === selected) ctx.fillText("›", 119, y);
+    if (index + first === selected) ctx.fillText("›", 119, y);
     ctx.fillText(item.label, 138, y);
   });
+  ctx.font = "14px sans-serif";
+  if (first > 0) ctx.fillText("↑", 272, 14);
+  if (first + 6 < items.length) ctx.fillText("↓", 272, 130);
   const blob = await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob(
       (value) =>
@@ -215,9 +227,7 @@ export async function renderHudMenu(
     ctx.fillStyle = "#fff";
     ctx.font = '18px "Microsoft YaHei", "PingFang SC", sans-serif';
     ctx.fillText(
-      routes
-        ? "滑动选择 · 双击开始"
-        : "滑动选择 · 双击确认",
+      routes ? "滑动选择 · 双击开始" : "滑动选择 · 双击确认",
       24,
       264,
     );
