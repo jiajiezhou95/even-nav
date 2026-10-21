@@ -16,6 +16,9 @@ This does not subscribe to a plan. The backend uses `NAVITIME_RAPIDAPI_KEY`. Con
 
 ## Capabilities
 
+- Missing/numeric route labels now use station-detail lookup at both ends. Unique name/coordinate station matches, matching operators and one shared line ID/name are required before replacing the label; the original label and NAVITIME provenance remain attached. Ambiguity stays unmatched. This fallback normally uses six requests including gateways and remains under the shared 15-request cap.
+- Tokyo timetable availability is not equivalent to trip-level realtime delay coverage. Transitous currently lists Tokyo rail alert and vehicle-position feeds; a returned ride without a realtime flag remains schedule-only. No delay value is invented from absence of realtime updates.
+
 - Free Transport exposes `/transport_link` and `/transport_node/gateway` at `https://navitime-transport.p.rapidapi.com` with RapidAPI authentication headers.
 - Gateways are matched to the station and ranked by straight-line distance to the adjacent walking leg's origin (boarding) or destination (alighting). The nearest unambiguous candidate is highlighted; transfers use their local walking endpoints. This does not establish opening hours, accessibility, connection feasibility, or the shortest walk. Route geometry is not silently redirected through a gateway. Missing geometry or sub-metre ties retain candidates without selecting one.
 - Direction-dependent carriage advice is omitted without verified train direction.

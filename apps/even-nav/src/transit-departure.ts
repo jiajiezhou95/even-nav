@@ -5,6 +5,23 @@ import type {
 } from "../../../packages/core/src/navigation";
 import { distanceMeters } from "../../../packages/core/src/geometry";
 
+export function transitLineLabel(line?: string): string {
+  const value = line?.normalize("NFKC").trim();
+  return !value || /^\d+$/.test(value) ? "线路名称待补充" : value;
+}
+
+function compactTransitLabel(value: string, limit: number): string {
+  // Prefer the supplied Japanese label when its appended Latin translation repeats it.
+  const local =
+    value.match(
+      /^(.+[\u3040-\u30ff\u3400-\u9fff])\s+[A-Za-z][\x20-\x7e]*$/u,
+    )?.[1] || value;
+  const characters = Array.from(local);
+  return characters.length > limit
+    ? `${characters.slice(0, limit - 4).join("")}…${characters.slice(-3).join("")}`
+    : local;
+}
+
 export function nextDeparture(state: NavigationState) {
   if (state.phase !== "NAVIGATING" || !state.route) return;
   const index = state.route.legs.findIndex(
@@ -28,6 +45,7 @@ export function nextDeparture(state: NavigationState) {
 export function departureText(
   state: NavigationState,
   now = Date.now(),
+  compact = false,
 ): string {
   const departure = nextDeparture(state);
   if (!departure) return "";
@@ -38,7 +56,16 @@ export function departureText(
     hour12: false,
   }).format(departure.at);
   const seconds = Math.max(0, Math.ceil((departure.at - now) / 1000));
-  return `${departure.leg.realtime ? "发车" : "计划发车"} ${clock} · ${seconds ? `${Math.floor(seconds / 60)}分${String(seconds % 60).padStart(2, "0")}秒` : "已到发车时间"}`;
+  const leg = departure.leg;
+  const line = transitLineLabel(leg.line);
+  const direction = leg.headsign?.trim()
+    ? `往${leg.headsign.trim()}`
+    : leg.toStop?.name || leg.to
+      ? `乘至${leg.toStop?.name || leg.to}`
+      : "方向待补充";
+  const service = `下一班 ${compact ? compactTransitLabel(line, 10) : line} · ${compact ? compactTransitLabel(direction, 12) : direction}`;
+  const timing = `${leg.realtime ? "发车" : "时刻表发车"} ${clock} · ${seconds ? `${Math.floor(seconds / 60)}分${String(seconds % 60).padStart(2, "0")}秒` : "已到发车时间"}`;
+  return `${service}\n${timing}${!compact && !leg.realtime ? "（无实时延误数据）" : ""}`;
 }
 
 function outsideStation(state: NavigationState, now: number) {

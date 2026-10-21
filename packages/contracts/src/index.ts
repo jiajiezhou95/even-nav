@@ -100,6 +100,8 @@ export interface RouteLeg {
   startTime?: string;
   endTime?: string;
   line?: string;
+  lineOriginal?: string;
+  lineNameSource?: "NAVITIME";
   headsign?: string;
   agency?: string;
   from?: string;

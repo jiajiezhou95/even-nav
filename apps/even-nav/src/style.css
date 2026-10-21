@@ -773,6 +773,7 @@ dialog > p {
   text-align: left;
 }
 .departure-status {
+  white-space: pre-line;
   font-size: 18px;
   font-weight: 650;
   margin: 12px 0;

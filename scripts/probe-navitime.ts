@@ -62,6 +62,12 @@ try {
     const statuses =
       data.routes?.map((route) => ({
         exits: route.navitime?.exits,
+        ridesWithNumericNames: route.legs.filter(
+          (leg) => leg.mode === "RIDE" && /^\d+$/.test(leg.line || ""),
+        ).length,
+        realtimeRides: route.legs.filter(
+          (leg) => leg.mode === "RIDE" && leg.realtime,
+        ).length,
         platforms: route.navitime?.platforms,
         stopsWithExits: route.legs
           .flatMap((leg) => [leg.fromStop, leg.toStop])

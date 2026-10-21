@@ -45,6 +45,7 @@ import { createImuProbe, type ImuProbePhase } from "./imu-probe";
 import packageInfo from "../../../package.json";
 import {
   departureText,
+  transitLineLabel,
   MissedDepartureRefresh,
   futureTransitRoutes,
   sameRemainingRides,
@@ -244,7 +245,7 @@ function itinerary(route: Route) {
               .join("")}</div></li>`,
         )
         .join("") +
-      '<li class="small muted">未列出的站台与出入口信息未由路线服务提供。</li>'
+      '<li class="small muted">未显示的站台或出入口尚未匹配到可靠信息。</li>'
     );
   return route.legs
     .map(
@@ -260,7 +261,7 @@ function itinerary(route: Route) {
 function transitRouteSummary(route: Route) {
   const rides = route.legs.filter((leg) => leg.mode === "RIDE");
   return {
-    lines: rides.map((leg) => leg.line || "公共交通").join(" → "),
+    lines: rides.map((leg) => transitLineLabel(leg.line)).join(" → "),
     transfers: rides.slice(1).filter((leg) => !leg.staySeated).length,
     walking: route.legs
       .filter((leg) => leg.mode === "WALK" || leg.mode === "TRANSFER")

@@ -1,5 +1,14 @@
 # Verification checkpoint — 2026-10-20
 
+## Beta 0.1.24 — opaque line identity and next-train banner
+
+- Fixed numeric/missing line enrichment using both stations' NAVITIME details, operator and unique shared line identity. No numeric-ID mapping is guessed. Original label/provenance retained. Missing/ambiguous identity remains unmatched.
+- Phone/G2 banner includes line, headsign direction, departure and countdown; missing headsign uses explicit ride-to station rather than pretending it is the terminus. Numeric IDs are not shown as readable line names. Schedule-only rides explain absence of realtime delay data.
+- LIVE public synthetic fallback used6NAVITIME requests: line resolved, gateways AVAILABLE at both ends; one nearest selection and one ambiguous candidate set. The initial local assertion expected two selections and exited nonzero; actual line/gateway integration succeeded, selection ambiguity was retained correctly. No repeat provider call for that assertion.
+- LIVE deployed Worker query using station-level endpoints for the reported corridor: two of three alternatives had no numeric line names, AVAILABLE exits and two selected stops each; third remained NO_MATCH. All returned ride realtime flags were false. One Transitous query, up to15NAVITIME requests,0Google requests. Private itinerary/coordinates not published.
+- Unit454/454 PASS; TypeScript PASS; two affected browser mock rollover/failure checks PASS. G2 composition screenshot inspected. Build/privacy139files PASS. Hardware behavior remains NOT RUN.
+- Worker version0a06c1dd-1ef9-4cae-9b0f-ad2666138715. Package92825bytes,SHA25646fc836e19a9cfae0b8134830b0b20403804f0bb49d078c178b11d6b2db7f924. Official private Beta channel/readback and exact-head CI tracked separately.
+
 ## Beta 0.1.23 — departure countdown and nearest station access
 
 - G2 attribution retained in full at 12px in a compact left column; 13px right column adds actual/plan-labelled departure countdown alongside remaining distance, current time and ETA. Local one-second ticking does not query providers. Long required attribution can still consume footer height.

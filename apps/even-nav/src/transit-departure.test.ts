@@ -7,6 +7,7 @@ import {
   MissedDepartureRefresh,
   sameRemainingRides,
   futureTransitRoutes,
+  transitLineLabel,
 } from "./transit-departure";
 const now = Date.parse("2026-10-21T00:00:00Z");
 const origin = { lat: 35, lng: 139 },
@@ -63,6 +64,51 @@ function observed(guard: MissedDepartureRefresh, s = state()) {
   return s;
 }
 describe("real transit departure countdown and rollover", () => {
+  it("shows line and supplied headsign with clock/countdown, preserving full phone labels", () => {
+    const s = state(),
+      leg = s.route!.legs[1];
+    leg.line = "東京メトロ銀座線 Tokyo Metro Ginza Line";
+    leg.headsign = "浅草 Asakusa";
+    const phone = departureText(s, now);
+    expect(phone).toContain(
+      "下一班 東京メトロ銀座線 Tokyo Metro Ginza Line · 往浅草 Asakusa",
+    );
+    expect(phone).toContain("时刻表发车 09:00 · 0分30秒（无实时延误数据）");
+    const hud = departureText(s, now, true);
+    expect(hud.split("\n")).toEqual([
+      "下一班 東京メトロ銀座線 · 往浅草",
+      "时刻表发车 09:00 · 0分30秒",
+    ]);
+    expect(hud).not.toContain("Ginza");
+  });
+  it("does not fabricate headsign or expose numeric-only provider line identifiers", () => {
+    const s = state(),
+      leg = s.route!.legs[1];
+    leg.line = "２０２１０８６１";
+    expect(transitLineLabel(leg.line)).toBe("线路名称待补充");
+    expect(departureText(s, now)).toContain("下一班 线路名称待补充 · 乘至乙站");
+    expect(departureText(s, now)).not.toContain("往乙站");
+    delete leg.to;
+    expect(departureText(s, now)).toContain("方向待补充");
+  });
+  it("keeps long Japanese service labels inside one compact HUD line without truncating time", () => {
+    const s = state(),
+      leg = s.route!.legs[1];
+    leg.line = "東日本旅客鉄道東海道本線快速特別運転系統 East Japan Railway";
+    leg.headsign = "東京国際空港第三ターミナル Haneda Airport Terminal Three";
+    const [service, timing] = departureText(s, now, true).split("\n");
+    expect(service).toContain("…");
+    expect(service).toContain("往");
+    expect(service).toContain("ナル");
+    expect(
+      Array.from(service).reduce(
+        (width, char) => width + (/[\x00-\x7f]/.test(char) ? 7 : 13),
+        0,
+      ),
+    ).toBeLessThanOrEqual(366);
+    expect(timing).toBe("时刻表发车 09:00 · 0分30秒");
+    expect(departureText(s, now)).toContain(leg.headsign);
+  });
   it("ticks from actual timestamp, never invents a later train at zero", () => {
     const s = state();
     expect(departureText(s, now)).toContain("09:00 · 0分30秒");

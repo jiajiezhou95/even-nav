@@ -110,14 +110,13 @@ describe("NAVITIME optional free Transport enrichment", () => {
       result[0]!.legs[1]!.toStop?.stationAccess?.selectedGateway,
     ).toBeUndefined();
   });
-  it("skips numeric route IDs then matches reviewed bilingual Tokyo Metro identity", async () => {
+  it("matches reviewed bilingual Tokyo Metro identity", async () => {
     const input = routes();
     const ride = input[0]!.legs[0]!;
     ride.line = "東京メトロ銀座線 Tokyo Metro Ginza Line";
     ride.agency = "東京メトロ Tokyo Metro";
     ride.fromStop!.name = "外苑前 Gaiemmae";
     ride.toStop!.name = "渋谷 Shibuya";
-    input[0]!.legs.unshift({ ...structuredClone(ride), line: "20210861" });
     const fetcher = vi.fn(async (raw: string | URL | Request) => {
       const url = new URL(String(raw));
       if (url.pathname === "/transport_link") {
@@ -143,9 +142,89 @@ describe("NAVITIME optional free Transport enrichment", () => {
       fetcher,
     );
     expect(fetcher).toHaveBeenCalledTimes(5);
-    expect(result[0]!.legs[0]!.fromStop?.stationAccess).toBeUndefined();
-    expect(result[0]!.legs[1]!.fromStop?.stationAccess?.nodeId).toBe("a");
+    expect(result[0]!.legs[0]!.fromStop?.stationAccess?.nodeId).toBe("a");
   });
+  it.each([
+    "success",
+    "empty exits",
+    "ambiguous",
+    "operator",
+    "distance",
+    "truncated",
+    "different lines",
+    "nontrain",
+  ])(
+    "resolves opaque line IDs with two station identities: %s",
+    async (kind) => {
+      const input = routes();
+      input[0]!.legs[0]!.line = "12345678";
+      const reserve = vi.fn(async () => {});
+      const fetcher = vi.fn(async (raw: string | URL | Request) => {
+        const url = new URL(String(raw));
+        if (url.pathname === "/transport_node") {
+          expect(url.searchParams.get("options")).toBe("detail");
+          expect(url.searchParams.get("type")).toBe("station");
+          const station = url.searchParams.get("word") === a.name ? a : b;
+          const second = station.id === b.id;
+          const details = [
+            {
+              company: {
+                name:
+                  second && kind === "operator" ? "Wrong" : line.company.name,
+              },
+              link: {
+                id: second && kind === "different lines" ? "other" : line.id,
+                name: line.name,
+                type: kind === "nontrain" ? "bus" : "train",
+              },
+            },
+          ];
+          if (kind === "ambiguous")
+            details.push({
+              ...details[0]!,
+              link: { id: "parallel", name: "Parallel", type: "train" },
+            });
+          return Response.json({
+            count: { total: kind === "truncated" ? 2 : 1, offset: 0 },
+            unit: { datum: "wgs84", coord_unit: "degree" },
+            items: [
+              {
+                ...station,
+                coord:
+                  kind === "distance" ? { lat: 40, lon: 139 } : station.coord,
+                details,
+              },
+            ],
+          });
+        }
+        expect(url.pathname).toBe("/transport_node/gateway");
+        const data = gateway(url);
+        if (kind === "empty exits") {
+          data.items = [];
+          data.count.total = 0;
+        }
+        return Response.json(data);
+      });
+      const result = await enrichNavitime(input, "synthetic", reserve, fetcher);
+      const ride = result[0]!.legs[0]!;
+      if (kind === "success" || kind === "empty exits") {
+        expect(fetcher).toHaveBeenCalledTimes(6);
+        expect(ride.line).toBe(line.name);
+        expect(ride.lineOriginal).toBe("12345678");
+        expect(ride.lineNameSource).toBe("NAVITIME");
+        expect(result[0]!.attribution).toContain("NAVITIME JAPAN");
+        expect(!!ride.fromStop?.stationAccess).toBe(kind === "success");
+      } else {
+        expect(fetcher.mock.calls.length).toBeLessThanOrEqual(2);
+        expect(ride.line).toBe("12345678");
+        expect(ride.lineNameSource).toBeUndefined();
+        expect(ride.fromStop?.stationAccess).toBeUndefined();
+      }
+      expect(reserve).toHaveBeenCalledTimes(fetcher.mock.calls.length);
+      expect(ride.geometry).toEqual(input[0]!.legs[0]!.geometry);
+      expect(ride.durationSeconds).toBe(input[0]!.legs[0]!.durationSeconds);
+    },
+  );
   it.each([undefined, null])(
     "accepts zero matches with items=%s and continues later rides",
     async (items) => {

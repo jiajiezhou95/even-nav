@@ -345,7 +345,7 @@ for (const failRefresh of [false, true])
     await page.getByRole("button", { name: "重新规划", exact: true }).click();
     await page.getByRole("button", { name: "开始导航 ↗" }).click();
     await expect(page.locator("#nav-departure")).toContainText(
-      "计划发车 09:00 · 0分",
+      "时刻表发车 09:00 · 0分",
     );
     for (let second = 1; second <= 36; second++) {
       await page.clock.fastForward(1000);
@@ -381,9 +381,15 @@ for (const failRefresh of [false, true])
     expect(requests).toBe(2);
     expect((await state(page)).phase).toBe("NAVIGATING");
     await expect(page.locator("#nav-departure")).toContainText("09:10");
+    await expect(page.locator("#nav-departure")).toContainText(
+      "下一班 合成蓝线 · 往合成终点方向",
+    );
     await expect
       .poll(() => page.evaluate(() => (window as any).lastFrame.status))
       .toContain("09:10");
+    await expect
+      .poll(() => page.evaluate(() => (window as any).lastFrame.status))
+      .toContain("下一班 合成蓝线 · 往合成终点方向");
     await page.screenshot({
       path: ".local/evidence/transit-departure-phone.png",
       fullPage: true,

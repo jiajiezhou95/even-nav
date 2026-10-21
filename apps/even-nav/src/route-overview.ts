@@ -1,5 +1,6 @@
 import type { Route } from "../../../packages/contracts/src/index";
 import type { HudRouteStep } from "./hud-menu";
+import { transitLineLabel } from "./transit-departure";
 
 export function isTransitOverview(route: Route) {
   return (
@@ -75,7 +76,7 @@ export function transitLegOverview(leg: Route["legs"][number]): string {
       .join("\n");
   if (leg.mode === "WAIT")
     return [
-      `候车${leg.line ? ` ${leg.line}` : ""} · ${minutes}`,
+      `候车 ${transitLineLabel(leg.line)} · ${minutes}`,
       from || to,
       [platformText, departure && `出发 ${departure}`]
         .filter(Boolean)
@@ -100,7 +101,7 @@ export function transitLegOverview(leg: Route["legs"][number]): string {
       .join(" · ");
   });
   return [
-    `乘坐 ${leg.line || "公共交通"}${leg.headsign ? ` · 往${leg.headsign}` : ""} · ${minutes}`,
+    `乘坐 ${transitLineLabel(leg.line)}${leg.headsign ? ` · 往${leg.headsign}` : ""} · ${minutes}`,
     `${from || "上车站未提供"}${platformText ? ` · ${platformText}` : ""}${departure ? ` · 出发 ${departure}` : ""}`,
     stops === undefined
       ? "中途站未提供"
@@ -109,7 +110,7 @@ export function transitLegOverview(leg: Route["legs"][number]): string {
         : "无中途停靠站",
     `${to || "下车站未提供"}${arrival ? ` · 到达 ${arrival}` : ""}`,
     leg.staySeated ? "直通无需下车" : "",
-    leg.realtime ? "含实时数据" : "计划时刻 · 延误未知",
+    leg.realtime ? "包含实时更新" : "时刻表时间（无实时延误数据）",
     ...stationAccessOverview(leg),
   ]
     .filter(Boolean)
@@ -124,7 +125,7 @@ export function routeOverviewSteps(
 ): HudRouteStep[] {
   if (isTransitOverview(route))
     return route.legs.map((leg, index) => ({
-      text: `${transitLegOverview(leg)}${index === route.legs.length - 1 ? "\n未列出的站台/出入口未提供" : ""}`,
+      text: `${transitLegOverview(leg)}${index === route.legs.length - 1 ? "\n未显示的站台或出入口尚未匹配到可靠信息" : ""}`,
       current: index === legIndex,
     }));
   return route.legs.flatMap((leg, index) => {

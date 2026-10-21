@@ -5,7 +5,7 @@ import type {
 import type { Mode } from "../../../packages/contracts/src/index";
 import { staleInstruction } from "./freshness";
 import { geometryLength } from "../../../packages/core/src/geometry";
-import { departureText } from "./transit-departure";
+import { departureText, transitLineLabel } from "./transit-departure";
 
 const actions: Record<string, string> = {
   TURN_LEFT: "向左转",
@@ -75,7 +75,7 @@ export function transitPhaseDetail(state: NavigationState): string {
     leg.mode === "WAIT" ? state.route?.legs[state.legIndex + 1] : leg;
   const alighting = leg.mode === "WAIT" ? ride?.to : leg.to;
   return [
-    leg.line || ride?.line,
+    transitLineLabel(leg.line || ride?.line),
     (leg.headsign || ride?.headsign) &&
       `方向 ${leg.headsign || ride?.headsign}`,
     leg.from && `${leg.mode === "TRANSFER" ? "从" : "上车站 "}${leg.from}`,
@@ -134,7 +134,7 @@ export function guidanceView(
   if (leg.mode === "WAIT") {
     const ride = state.route?.legs[state.legIndex + 1];
     return {
-      ...plain(`候车 ${leg.line || ride?.line || "公共交通"}`),
+      ...plain(`候车 ${transitLineLabel(leg.line || ride?.line)}`),
       icon: "transport",
       distance: [
         leg.headsign || ride?.headsign,
@@ -150,7 +150,7 @@ export function guidanceView(
   if (leg.mode === "RIDE")
     return {
       ...plain(
-        `${state.boarded ? "乘坐" : "待上车"} ${leg.line || "公共交通"}`,
+        `${state.boarded ? "乘坐" : "待上车"} ${transitLineLabel(leg.line)}`,
       ),
       icon: "transport",
       distance: [
@@ -172,7 +172,7 @@ export function guidanceView(
       ...plain(`换乘${leg.to ? ` ${leg.to}` : ""}`),
       distance: `剩余 ${Math.round(Math.max(0, leg.distanceMeters - state.progressMeters))}米`,
       next:
-        [leg.line, leg.platform && `${leg.platform}站台`]
+        [transitLineLabel(leg.line), leg.platform && `${leg.platform}站台`]
           .filter(Boolean)
           .join(" · ") || "到达后确认完成换乘",
       stale,
@@ -356,7 +356,7 @@ export function hudStatus(
     guidanceView(state, mode, now).stale || state.locationStale
       ? `${total}\n${arrival} ${Math.floor(now / 1000) % 2 ? "●" : " "} 更新定位中`
       : `${total}\n${arrival}`;
-  const departure = mode === "TRANSIT" ? departureText(state, now) : "";
+  const departure = mode === "TRANSIT" ? departureText(state, now, true) : "";
   const withDeparture = departure
     ? `${departure}\n${status.replace("\n", "  ")}`
     : status;

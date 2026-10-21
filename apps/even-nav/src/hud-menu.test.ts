@@ -196,7 +196,7 @@ describe("complete route overview text", () => {
     const all = pages.flatMap((p) => p.lines).join("");
     for (let i = 1; i <= 12; i++) expect(all).toContain(`中途站${i}`);
     expect(all).toContain("停靠取消");
-    expect(all).toContain("未列出的站台/出入口未提供");
+    expect(all).toContain("未显示的站台或出入口尚未匹配到可靠信息");
     expect(result[3].text).toContain("乙站 → 地铁站");
     const walking = routeOverviewSteps(
       { provider: "GOOGLE_ROUTES", legs: [legs[0]] } as Route,

@@ -48,6 +48,29 @@ const links = z
       });
   })
   .transform((data) => ({ ...data, items: data.items ?? [] }));
+const detailedNode = node.extend({
+  details: z
+    .array(
+      z.object({
+        company: company.nullish(),
+        companies: z.array(company).nullish(),
+        link: z.object({ id, name, type: z.string().nullish() }),
+      }),
+    )
+    .max(100)
+    .nullish(),
+});
+const stationSearch = z.object({
+  count: z.object({
+    total: z.number().int().nonnegative(),
+    offset: z.literal(0),
+  }),
+  items: z.array(detailedNode).max(100),
+  unit: z.object({
+    datum: z.literal("wgs84"),
+    coord_unit: z.literal("degree"),
+  }),
+});
 const gateways = z.object({
   count: z.object({
     total: z.number().int().nonnegative(),
@@ -107,8 +130,6 @@ function matchStop(nodes: z.infer<typeof node>[], stop: RouteStop) {
 function eligible(leg: RouteLeg) {
   return (
     leg.mode === "RIDE" &&
-    !!leg.line &&
-    !/^\d+$/.test(normalized(leg.line)) &&
     !!leg.agency &&
     !!leg.fromStop?.name &&
     !!leg.fromStop.coordinate &&
@@ -136,6 +157,7 @@ export async function enrichNavitime(
   let stopped: "LIMIT_REACHED" | "UNAVAILABLE" | undefined;
   // Request-scoped deduplication only; provider data is never persisted/cached.
   const searches = new Map<string, z.infer<typeof links>>();
+  const stations = new Map<string, z.infer<typeof stationSearch>>();
   const accesses = new Map<string, StationAccess>();
   async function get(path: string, params: Record<string, string>) {
     if (stopped || requests >= 15 || signal.aborted) {
@@ -164,9 +186,67 @@ export async function enrichNavitime(
       ),
     );
   }
+  async function unidentifiedLine(
+    leg: RouteLeg,
+  ): Promise<z.infer<typeof links>> {
+    const endpoints: z.infer<typeof detailedNode>[] = [];
+    for (const stop of [leg.fromStop!, leg.toStop!]) {
+      const query = normalized(stop.name!);
+      let result = stations.get(query);
+      if (!result) {
+        result = stationSearch.parse(
+          await get("/transport_node", {
+            word: query,
+            type: "station",
+            options: "detail",
+          }),
+        );
+        stations.set(query, result);
+      }
+      if (result.count.total !== result.items.length)
+        return { count: { total: 0, offset: 0 }, items: [] };
+      const matched = matchStop(result.items, stop);
+      if (!matched) return { count: { total: 0, offset: 0 }, items: [] };
+      endpoints.push(result.items.find((n) => n === matched)!);
+    }
+    const [from, to] = endpoints;
+    if (!from || !to || from.id === to.id)
+      return { count: { total: 0, offset: 0 }, items: [] };
+    const operatorLinks = (n: z.infer<typeof detailedNode>) =>
+      (n.details ?? []).filter(
+        (d) =>
+          (!d.link.type || d.link.type === "train") &&
+          [d.company, ...(d.companies ?? [])].some(
+            (c) => c && operatorName(c.name) === operatorName(leg.agency!),
+          ),
+      );
+    const fromLinks = operatorLinks(from),
+      toLinks = operatorLinks(to);
+    const candidates = new Map<string, z.infer<typeof link>>();
+    for (const detail of fromLinks) {
+      if (
+        toLinks.some(
+          (d) =>
+            d.link.id === detail.link.id &&
+            equal(d.link.name, detail.link.name),
+        )
+      )
+        candidates.set(detail.link.id, {
+          ...detail.link,
+          company: detail.company,
+          companies: detail.companies,
+          nodes: [from, to],
+        });
+    }
+    return {
+      count: { total: candidates.size, offset: 0 },
+      items: [...candidates.values()],
+    };
+  }
   for (const route of output) {
     let matched = 0;
     let missing = 0;
+    let resolvedLine = false;
     for (const leg of route.legs) {
       if (leg.mode !== "RIDE") continue;
       if (!eligible(leg) || stopped) {
@@ -174,8 +254,25 @@ export async function enrichNavitime(
         continue;
       }
       try {
-        const query = normalized(leg.line!);
-        let result = searches.get(query);
+        const unknownLine =
+          !leg.line?.trim() || /^\d+$/.test(normalized(leg.line));
+        const query = normalized(leg.line ?? "");
+        let result: z.infer<typeof links> | undefined;
+        if (unknownLine) {
+          // Never use another provider's opaque identifier as a NAVITIME line ID.
+          const discovered = await unidentifiedLine(leg);
+          if (discovered.items.length !== 1) {
+            missing++;
+            continue;
+          }
+          const verified = discovered.items[0]!;
+          leg.lineOriginal = leg.line;
+          leg.line = verified.name;
+          leg.lineNameSource = "NAVITIME";
+          resolvedLine = true;
+          result = discovered;
+        }
+        result ??= searches.get(query);
         if (!result) {
           result = links.parse(
             await get("/transport_link", {
@@ -293,7 +390,7 @@ export async function enrichNavitime(
         ? "PARTIAL"
         : "AVAILABLE"
       : (stopped ?? "NO_MATCH");
-    if (matched) route.attribution.push("NAVITIME JAPAN");
+    if (matched || resolvedLine) route.attribution.push("NAVITIME JAPAN");
     selectStationAccessForRoute(route);
   }
   return output;
