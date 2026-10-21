@@ -34,3 +34,7 @@ Next DAG: restore browser control→Google API/key setup→bounded Google live+e
 - Local integration tests passed; provider live acceptance waits for owner-created Basic account and local `navitimeRapidApiKey` insertion. No provider account/key exists yet; no NAVITIME calls made.
 - Platform query is not included in the free API service. No paid endpoint is called. This portion remains unavailable rather than fabricated.
 - New Beta publication awaits live account/configuration verification; currently published 0.1.21 remains the baseline.
+
+## NAVITIME activation checkpoint — 2026-10-21
+
+Subscription/key setup complete. Real public route enrichment verified after bilingual identity repair; partial coverage retained honestly. Private Beta0.1.22 uploaded and downloaded hash verified. Free NAVITIME station platforms remain unavailable; existing Transitous platforms preserved. Hardware observation pending. See TEST_REPORT.md.

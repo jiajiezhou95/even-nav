@@ -281,3 +281,12 @@ Implemented optional server-side exit candidate enrichment, exact station/line/o
 - TypeScript and touched formatting PASS. Live probe dry-run prints bounded plan without network requests.
 - NAVITIME live calls: 0. Account and key not yet created, confirmed by owner. Live identity coverage/exit data NOT RUN; real G2 candidate display NOT RUN.
 - No new Worker deployment or private Beta publication at this checkpoint. Published 0.1.21 remains active. Complete live verification after local key insertion, then build/package and deliver the next Beta.
+
+## NAVITIME activation and private Beta 0.1.22 — 2026-10-21
+
+- Basic subscription confirmed in owner Chrome ($0/month,500 requests hard limit,no payment method); key saved in ignored local configuration and Worker Secrets. Three direct public NAVITIME probes returned HTTP200: station search,line search,and gateways. No credentials printed.
+- Initial integrated probe PARTIAL: numeric IDs and bilingual route names prevented enrichment. Narrow repair skips numeric IDs, normalizes Japanese-leading bilingual labels, maps the verified Tokyo Metro operator alias, and treats valid empty searches as NO_MATCH.
+- Fresh repaired deployed public OD probe PASS for exit enrichment:3 alternatives,2 enriched station endpoints each; one route AVAILABLE,two PARTIAL. This is not universal station/line coverage. Platforms remain unsupported by free NAVITIME Transport. Worker d7827921-f7dc-4046-ba0f-6f3c24ba50f6.
+- Task usage:9 NAVITIME HTTP requests (6 durable-counted Worker +3 direct probes),3 Transitous requests,0 Google requests. No retries of unchanged failed path. Free-plan allowance used; no paid subscription or upgrade.
+- Full deterministic unit suite419/419 PASS; TypeScript PASS; build/package PASS; privacy scan135 files PASS. Real G2 display and lockscreen NOT RUN for this delta.
+- Private Beta0.1.22 build117269 uploaded/promoted; downloaded artifact SHA256 matches e8bb717f5c3fe6bcc21b6760264ddec9c4f41cd3530a3eed2cb9b951160b6659,90632 bytes. Public store not published.

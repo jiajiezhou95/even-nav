@@ -25,17 +25,28 @@ const link = z.object({
   companies: z.array(company).nullish(),
   nodes: z.array(node).max(1000).nullish(),
 });
-const links = z.object({
-  count: z.object({
-    total: z.number().int().nonnegative(),
-    offset: z.literal(0),
-  }),
-  items: z.array(link).max(100),
-  unit: z.object({
-    datum: z.literal("wgs84"),
-    coord_unit: z.literal("degree"),
-  }),
-});
+const links = z
+  .object({
+    count: z.object({
+      total: z.number().int().nonnegative(),
+      offset: z.literal(0),
+    }),
+    items: z.array(link).max(100).nullish(),
+    unit: z
+      .object({
+        datum: z.literal("wgs84"),
+        coord_unit: z.literal("degree"),
+      })
+      .optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.count.total > 0 && (!data.items || !data.unit))
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Nonempty search requires items and units",
+      });
+  })
+  .transform((data) => ({ ...data, items: data.items ?? [] }));
 const gateways = z.object({
   count: z.object({
     total: z.number().int().nonnegative(),
@@ -49,7 +60,20 @@ const gateways = z.object({
     coord_unit: z.literal("degree"),
   }),
 });
-const normalized = (value: string) => value.normalize("NFKC").trim();
+const normalized = (value: string) => {
+  const text = value.normalize("NFKC").trim();
+  // MOTIS bilingual Japanese labels append a separated Latin translation.
+  // Only remove an entirely ASCII suffix after a Japanese-leading name.
+  const bilingual = text.match(
+    /^([\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}][^A-Za-z]*?)\s+[A-Za-z][A-Za-z0-9 .,'()/-]*$/u,
+  );
+  return bilingual ? bilingual[1]!.trim() : text;
+};
+const operatorName = (value: string) => {
+  const text = normalized(value);
+  // Reviewed against this provider's live Tokyo Metro response; no fuzzy aliases.
+  return text === "東京地下鉄(メトロ)" ? "東京メトロ" : text;
+};
 const equal = (a: string, b: string) => normalized(a) === normalized(b);
 function distance(a: Coordinate, b: { lat: number; lon: number }) {
   const rad = Math.PI / 180;
@@ -83,6 +107,7 @@ function eligible(leg: RouteLeg) {
   return (
     leg.mode === "RIDE" &&
     !!leg.line &&
+    !/^\d+$/.test(normalized(leg.line)) &&
     !!leg.agency &&
     !!leg.fromStop?.name &&
     !!leg.fromStop.coordinate &&
@@ -170,7 +195,7 @@ export async function enrichNavitime(
           if (
             !equal(candidate.name, leg.line!) ||
             ![candidate.company, ...(candidate.companies ?? [])].some(
-              (c) => c && equal(c.name, leg.agency!),
+              (c) => c && operatorName(c.name) === operatorName(leg.agency!),
             )
           )
             return [];

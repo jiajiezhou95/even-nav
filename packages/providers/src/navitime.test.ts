@@ -59,6 +59,81 @@ function gateway(url: URL) {
   };
 }
 describe("NAVITIME optional free Transport enrichment", () => {
+  it("skips numeric route IDs then matches reviewed bilingual Tokyo Metro identity", async () => {
+    const input = routes();
+    const ride = input[0]!.legs[0]!;
+    ride.line = "東京メトロ銀座線 Tokyo Metro Ginza Line";
+    ride.agency = "東京メトロ Tokyo Metro";
+    ride.fromStop!.name = "外苑前 Gaiemmae";
+    ride.toStop!.name = "渋谷 Shibuya";
+    input[0]!.legs.unshift({ ...structuredClone(ride), line: "20210861" });
+    const fetcher = vi.fn(async (raw: string | URL | Request) => {
+      const url = new URL(String(raw));
+      if (url.pathname === "/transport_link") {
+        expect(url.searchParams.get("word")).toBe("東京メトロ銀座線");
+        const result = search();
+        result.items[0]!.name = "東京メトロ銀座線";
+        result.items[0]!.company.name = "東京地下鉄（メトロ）";
+        result.items[0]!.nodes[0]!.name = "外苑前";
+        result.items[0]!.nodes[1]!.name = "渋谷";
+        return Response.json(result);
+      }
+      const result = gateway(url);
+      result.node = {
+        ...result.node,
+        name: result.node.id === "a" ? "外苑前" : "渋谷",
+      };
+      return Response.json(result);
+    });
+    const result = await enrichNavitime(
+      input,
+      "synthetic",
+      async () => {},
+      fetcher,
+    );
+    expect(fetcher).toHaveBeenCalledTimes(5);
+    expect(result[0]!.legs[0]!.fromStop?.stationAccess).toBeUndefined();
+    expect(result[0]!.legs[1]!.fromStop?.stationAccess?.nodeId).toBe("a");
+  });
+  it.each([undefined, null])(
+    "accepts zero matches with items=%s and continues later rides",
+    async (items) => {
+      const input = routes();
+      input[0]!.legs.push({
+        ...structuredClone(input[0]!.legs[0]!),
+        line: "Other line",
+      });
+      const fetcher = vi.fn(async () =>
+        Response.json({ count: { total: 0, offset: 0 }, items }),
+      );
+      const result = await enrichNavitime(
+        input,
+        "synthetic",
+        async () => {},
+        fetcher,
+      );
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(result[0]!.navitime?.exits).toBe("NO_MATCH");
+    },
+  );
+  it.each(["日本 Rail 日本", "東京メトロ 別会社", "Other Tokyo Metro"])(
+    "does not guess aliases or remove Japanese name segments: %s",
+    async (agency) => {
+      const input = routes();
+      input[0]!.legs[0]!.agency = agency;
+      const data = search();
+      data.items[0]!.company.name = "東京地下鉄（メトロ）";
+      const fetcher = vi.fn(async () => Response.json(data));
+      const result = await enrichNavitime(
+        input,
+        "synthetic",
+        async () => {},
+        fetcher,
+      );
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(result[0]!.navitime?.exits).toBe("NO_MATCH");
+    },
+  );
   it("caps the whole response at 15 upstream requests even across many rides", async () => {
     const input = routes();
     input[0]!.legs = Array.from({ length: 6 }, (_, i) => ({

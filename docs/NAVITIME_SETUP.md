@@ -4,6 +4,8 @@ The owner confirmed personal-use authorization on 2026-10-21. This does not chan
 
 Use [NAVITIME Transport Basic](https://rapidapi.com/navitimejapan-navitimejapan/api/navitime-transport). Published allowance: 500 requests per billing month (hard limit), 50 requests per minute. Other NAVITIME service groups are separate subscriptions.
 
+Owner's Basic subscription was confirmed through Chrome on 2026-10-21: $0/month, no payment method required. The checkout also lists a separate RapidAPI bandwidth allowance of 10,240 MB/month and $0.001/MB beyond it. Other applications sharing the account/subscription are outside Even Nav's counters. The key has been saved only in ignored local configuration and Worker Secrets; a real station-search request returned HTTP 200.
+
 Insert the key only into `navitimeRapidApiKey` in ignored `.local/config.json`. Never send it in chat, frontend configuration, source control, or an `.ehpk`. Configure only this Worker secret:
 
 ```powershell
