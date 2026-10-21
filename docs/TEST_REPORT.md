@@ -194,3 +194,12 @@ User also authorized a bounded G2 XYZ capture. Manual diagnostics use the public
 - Restore exact 0.1.7 layout as the FIRST startup payload, with only one identical-layout rebuild for invalid(1). No four-image attempt precedes it. Keep sanitized diagnostics and failure latch. This restores the last working layout rather than claiming B compatibility fixed.
 - Navigation, location, pairing and providers remain unchanged. Native display restoration, B layout and lockscreen acceptance remain pending hardware evidence.
 - 25 targeted device tests and TypeScript PASS; build/privacy119files PASS. Private Beta build117118,82149bytes; download SHA256 `c8b35ef24491f4140804a185f82dd01cede6df1a51c8786f0d05a3ae7784ea03` matches. Hardware restoration and final clean acceptance/CI remain pending.
+
+
+### Beta 0.1.14 — retain proven startup and recover map size
+
+- User confirms 0.1.13 G2 display SUCCESS with compatibility layout. This validates direct baseline startup; previous four-image-first initialization did not restore display. It does not establish the underlying four-image rejection cause. User reports map too small.
+- Preserve baseline startup. Attempt B only after successful initialization, with one bounded baseline restoration if B rebuild is rejected. Never start with four-image payload or repeat upgrades on periodic frames.
+- Compatibility map no longer shrinks the entire 576x192 source into a letterboxed288x96 area. Aspect-preserving cover crops the source center384x192 into288x144, making roads1.5x the prior letterboxed size and filling the old map container. The camera middle-half position range remains inside with margin; geographic coverage narrows horizontally and temple zoom remains available. Full attribution remains in native text.
+- No provider request construction, Worker, phone layout, route guidance or pairing changes. B optical rendering remains a separate pending hardware criterion.
+- 28 targeted device tests and TypeScript PASS. Actual browser adapter verifies cover crop, no black bars, uniform scaling, centered marker and36px position margins. Build/privacy119files PASS. Private Beta build117126,82273bytes; download SHA256 `cc427db7ff67216ef32c17f72237bd4d798b0606e10181feb0bd939a81d28313` matches. New B-switch optical acceptance remains pending.

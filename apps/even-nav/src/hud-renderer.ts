@@ -198,7 +198,7 @@ export async function renderHud(frame: HudContent): Promise<Uint8Array[]> {
   return images;
 }
 
-/** Preserve the entire B map in the proven 288 × 144 native image container. */
+/** Fill the proven container at uniform 0.75 scale while retaining the stable-camera position margin. */
 export async function renderCompatibilityMap(
   pixels: Uint8Array,
 ): Promise<Uint8Array> {
@@ -212,7 +212,7 @@ export async function renderCompatibilityMap(
     const ctx = canvas.getContext("2d")!;
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, 288, 144);
-    ctx.drawImage(map, 0, 24, 288, 96);
+    ctx.drawImage(map, 96, 0, 384, 192, 0, 0, 288, 144);
     return await png(canvas);
   } finally {
     map.close();

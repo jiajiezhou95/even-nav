@@ -41,7 +41,137 @@ vi.mock("./hud-renderer", async (importOriginal) => {
   };
 });
 
+function rejectBAndRestore() {
+  return vi
+    .fn(async (_page: RebuildPageContainer) => true)
+    .mockResolvedValueOnce(false);
+}
+
 describe("official SDK boundary and display queue", () => {
+  it("waits for baseline startup success before one B rebuild and four-image dispatch", async () => {
+    let release!: (result: number) => void;
+    const bridge = {
+      createStartUpPageContainer: vi.fn(
+        async (_page: CreateStartUpPageContainer) =>
+          new Promise<number>((resolve) => {
+            release = resolve;
+          }),
+      ),
+      rebuildPageContainer: vi.fn(async (_page: RebuildPageContainer) => true),
+      textContainerUpgrade: vi.fn(),
+      updateImageRawData: vi.fn(
+        async (_value: { containerID: number }) => "success",
+      ),
+    };
+    const device = new EvenDevice(
+      () => {},
+      () => {},
+      () => {},
+    );
+    Object.assign(device, { bridge, connected: true, source: "EVEN" });
+    const frame = {
+      sequence: 1,
+      version: 0,
+      pixels: new Uint8Array([1]),
+      instruction: "直行",
+      status: "",
+      attribution: "Synthetic",
+    };
+    device.queue.push(frame);
+    expect(bridge.rebuildPageContainer).not.toHaveBeenCalled();
+    release(0);
+    await vi.waitFor(() => expect(device.lastSubmission?.sequence).toBe(1));
+    const baseline =
+      bridge.createStartUpPageContainer.mock.calls[0][0].toJson();
+    const b = bridge.rebuildPageContainer.mock.calls[0][0].toJson();
+    expect(
+      baseline.imageObject.map((v: { containerID: number }) => v.containerID),
+    ).toEqual([1, 5]);
+    expect(
+      b.imageObject.map((v: { containerID: number }) => v.containerID),
+    ).toEqual([1, 2, 3, 4]);
+    expect(b.textObject).toEqual([
+      {
+        containerID: 5,
+        containerName: "hud-events",
+        xPosition: 300,
+        yPosition: 0,
+        width: 20,
+        height: 20,
+        content: " ",
+        isEventCapture: 1,
+      },
+    ]);
+    expect(
+      bridge.updateImageRawData.mock.calls.map(([v]) => v.containerID),
+    ).toEqual([1, 2, 3, 4]);
+    expect(bridge.textContainerUpgrade).not.toHaveBeenCalled();
+    device.queue.push({ ...frame, sequence: 2 });
+    await vi.waitFor(() => expect(device.lastSubmission?.sequence).toBe(2));
+    expect(bridge.createStartUpPageContainer).toHaveBeenCalledOnce();
+    expect(bridge.rebuildPageContainer).toHaveBeenCalledOnce();
+  });
+  it("latches rejected B plus failed baseline restoration without dispatching an unknown layout", async () => {
+    const bridge = {
+      createStartUpPageContainer: vi.fn(async () => 0),
+      rebuildPageContainer: vi.fn(async () => false),
+      updateImageRawData: vi.fn(),
+    };
+    const health = vi.fn();
+    const device = new EvenDevice(
+      () => {},
+      health,
+      () => {},
+    );
+    Object.assign(device, { bridge, connected: true, source: "EVEN" });
+    const frame = {
+      sequence: 1,
+      version: 0,
+      pixels: new Uint8Array([1]),
+      instruction: "直行",
+      status: "",
+      attribution: "Synthetic",
+    };
+    device.queue.push(frame);
+    await vi.waitFor(() => expect(health).toHaveBeenCalledOnce());
+    expect(device.lastDisplayFailure?.code).toBe(
+      "B-rebuild-invalid/compat-restore-invalid",
+    );
+    device.queue.push({ ...frame, sequence: 2 });
+    await vi.waitFor(() => expect(health).toHaveBeenCalledTimes(2));
+    expect(bridge.createStartUpPageContainer).toHaveBeenCalledOnce();
+    expect(bridge.rebuildPageContainer).toHaveBeenCalledTimes(2);
+    expect(bridge.updateImageRawData).not.toHaveBeenCalled();
+  });
+  it("reports a B rebuild exception without claiming either layout or attempting another rebuild", async () => {
+    const bridge = {
+      createStartUpPageContainer: vi.fn(async () => 0),
+      rebuildPageContainer: vi.fn(async () => {
+        throw new Error("timeout");
+      }),
+      updateImageRawData: vi.fn(),
+    };
+    const health = vi.fn();
+    const device = new EvenDevice(
+      () => {},
+      health,
+      () => {},
+    );
+    Object.assign(device, { bridge, connected: true, source: "EVEN" });
+    device.queue.push({
+      sequence: 1,
+      version: 0,
+      pixels: new Uint8Array([1]),
+      instruction: "直行",
+      status: "",
+      attribution: "Synthetic",
+    });
+    await vi.waitFor(() => expect(health).toHaveBeenCalledOnce());
+    expect(device.lastDisplayFailure?.code).toBe("B-rebuild-timeout");
+    expect(device.lastSubmission).toBeUndefined();
+    expect(bridge.rebuildPageContainer).toHaveBeenCalledOnce();
+    expect(bridge.updateImageRawData).not.toHaveBeenCalled();
+  });
   it("records only numeric App ID validity flags, never the identifier", async () => {
     try {
       for (const [id, finite, integer, positive] of [
@@ -244,7 +374,7 @@ describe("official SDK boundary and display queue", () => {
       createStartUpPageContainer: vi.fn(
         async (_page: CreateStartUpPageContainer) => 0,
       ),
-      rebuildPageContainer: vi.fn(),
+      rebuildPageContainer: rejectBAndRestore(),
       textContainerUpgrade: vi.fn(async () => true),
       updateImageRawData: vi.fn(
         async (_value: { containerID: number }) => "success",
@@ -283,12 +413,13 @@ describe("official SDK boundary and display queue", () => {
         (item) => !Object.hasOwn(item, "zOrderIndex"),
       ),
     ).toBe(true);
-    expect(bridge.rebuildPageContainer).not.toHaveBeenCalled();
+    expect(bridge.rebuildPageContainer).toHaveBeenCalledTimes(2);
     expect(vi.mocked(renderHud).mock.calls.length).toBe(bRenderCalls);
   });
   it("replaces changed native cue or blinking status without reuploading unchanged images", async () => {
     const bridge = {
       createStartUpPageContainer: vi.fn(async () => 0),
+      rebuildPageContainer: rejectBAndRestore(),
       textContainerUpgrade: vi.fn(async () => true),
       updateImageRawData: vi.fn(
         async (_value: { containerID: number }) => "success",
@@ -328,6 +459,7 @@ describe("official SDK boundary and display queue", () => {
     const failed = vi.fn();
     const bridge = {
       createStartUpPageContainer: vi.fn(async () => 0),
+      rebuildPageContainer: rejectBAndRestore(),
       textContainerUpgrade: vi.fn(async () => true),
       updateImageRawData: vi.fn(async (v: { containerID: number }) =>
         v.containerID === 1 ? "imageSizeInvalid" : "success",
@@ -428,7 +560,11 @@ describe("official SDK boundary and display queue", () => {
       createStartUpPageContainer: vi.fn(
         async (_page: CreateStartUpPageContainer) => 1,
       ),
-      rebuildPageContainer: vi.fn(async (_page: RebuildPageContainer) => true),
+      rebuildPageContainer: vi
+        .fn(async (_page: RebuildPageContainer) => true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true),
       textContainerUpgrade: vi.fn(async () => true),
       updateImageRawData: vi.fn(async () => "success"),
     };
@@ -458,7 +594,7 @@ describe("official SDK boundary and display queue", () => {
     device.queue.push({ ...frame, sequence: 2 });
     await vi.waitFor(() => expect(device.lastSubmission?.sequence).toBe(2));
     expect(bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
-    expect(bridge.rebuildPageContainer).toHaveBeenCalledTimes(1);
+    expect(bridge.rebuildPageContainer).toHaveBeenCalledTimes(3);
   });
   it("keeps create and rebuild exception stages distinct without leaking host messages", async () => {
     const health = vi.fn();
@@ -528,7 +664,7 @@ describe("official SDK boundary and display queue", () => {
       createStartUpPageContainer: vi.fn(
         async (_page: CreateStartUpPageContainer) => 0,
       ),
-      rebuildPageContainer: vi.fn(),
+      rebuildPageContainer: rejectBAndRestore(),
       textContainerUpgrade: vi.fn(
         async (_value: {
           containerID: number;
@@ -650,14 +786,14 @@ describe("official SDK boundary and display queue", () => {
       status: "总剩余 860 m\n  更新定位中",
     });
     await vi.waitFor(() => expect(device.lastSubmission?.sequence).toBe(2));
-    expect(bridge.rebuildPageContainer).not.toHaveBeenCalled();
+    expect(bridge.rebuildPageContainer).toHaveBeenCalledTimes(2);
     expect(bridge.textContainerUpgrade).toHaveBeenCalledTimes(4);
     expect(bridge.updateImageRawData).toHaveBeenCalledTimes(2);
   });
   it("does not send compatibility text or images when map conversion fails or the trip changes", async () => {
     const bridge = {
       createStartUpPageContainer: vi.fn(async () => 0),
-      rebuildPageContainer: vi.fn(),
+      rebuildPageContainer: rejectBAndRestore(),
       textContainerUpgrade: vi.fn(async () => true),
       updateImageRawData: vi.fn(async () => "success"),
     };
@@ -698,6 +834,7 @@ describe("official SDK boundary and display queue", () => {
     const health = vi.fn();
     const bridge = {
       createStartUpPageContainer: vi.fn(async () => 0),
+      rebuildPageContainer: rejectBAndRestore(),
       textContainerUpgrade: vi.fn(async () => true),
       updateImageRawData: vi.fn(async () => "success"),
     };
@@ -751,6 +888,7 @@ describe("official SDK boundary and display queue", () => {
     );
     expect(bridge.imuControl).not.toHaveBeenCalled();
     bridge.createStartUpPageContainer.mockResolvedValue(0);
+    bridge.rebuildPageContainer.mockResolvedValue(true);
     const [one, two] = await Promise.all([
       device.prepareImuProbe(),
       device.prepareImuProbe(),

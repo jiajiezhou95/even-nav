@@ -230,7 +230,7 @@ export class EvenDevice {
   private pageCreated = false;
   private quadrantPixels: Uint8Array[] = [];
   private compatibilityLayout = false;
-  private compatibilityAnnounced = false;
+  private layoutAnnounced = false;
   private legacyMapPixels?: Uint8Array;
   private legacyIconKey?: string;
   private legacyTextValues = new Map<number, string>();
@@ -297,16 +297,20 @@ export class EvenDevice {
           at: Date.now(),
           result: "success",
         };
-        if (this.compatibilityLayout && !this.compatibilityAnnounced) {
-          this.compatibilityAnnounced = true;
+        if (!this.layoutAnnounced) {
+          this.layoutAnnounced = true;
           this.lastDisplayFailure = undefined;
-          this.onHealth("G2 已连接，兼容布局");
+          this.onHealth(
+            this.compatibilityLayout
+              ? "G2 已连接，兼容布局"
+              : "G2 已连接，大地图",
+          );
         } else if (this.lastDisplayFailure) {
           this.lastDisplayFailure = undefined;
           this.onHealth(
             this.compatibilityLayout
               ? "G2 已连接，兼容布局"
-              : "G2 已连接，导航画面已发送",
+              : "G2 已连接，大地图",
           );
         }
       },
@@ -487,6 +491,42 @@ export class EvenDevice {
       }),
     });
   }
+  private layoutBPage() {
+    return new RebuildPageContainer({
+      containerTotalNum: 5,
+      imageObject: HUD_QUADRANTS.map(
+        (tile) =>
+          new ImageContainerProperty({
+            containerID: tile.id,
+            containerName: tile.name,
+            xPosition: tile.x,
+            yPosition: tile.y,
+            width: 288,
+            height: 144,
+          }),
+      ),
+      // Event capture in a visually blank header area.
+      textObject: [
+        new TextContainerProperty({
+          containerID: 5,
+          containerName: "hud-events",
+          xPosition: 300,
+          yPosition: 0,
+          width: 20,
+          height: 20,
+          content: " ",
+          isEventCapture: 1,
+        }),
+      ],
+      menuObject: new MenuContainerProperty({
+        menuItems: [
+          new MenuItemProperty({ itemID: 1, itemName: "暂停" }),
+          new MenuItemProperty({ itemID: 2, itemName: "继续" }),
+          new MenuItemProperty({ itemID: 3, itemName: "结束" }),
+        ],
+      }),
+    });
+  }
   private async createPage() {
     this.pageCalls = [];
     // Restore the proven baseline at STARTUP, not only after an uncreated B page.
@@ -521,7 +561,40 @@ export class EvenDevice {
         ["success", "invalid", "oversize", "outOfMemory"][result] || "unknown";
       throw new DisplayError("PAGE", `compat-start-${code}(${result})`);
     }
-    this.compatibilityLayout = true;
+    // The native startup must succeed before attempting the approved larger layout.
+    let expanded;
+    try {
+      expanded = await observePageCall(this.bridge!, "r", this.pageCalls, () =>
+        this.bridge!.rebuildPageContainer(this.layoutBPage()),
+      );
+    } catch (error) {
+      throw new DisplayError("PAGE", `B-rebuild-${exceptionCode(error)}`);
+    }
+    if (expanded === true) {
+      this.compatibilityLayout = false;
+    } else {
+      let restored;
+      try {
+        restored = await observePageCall(
+          this.bridge!,
+          "k",
+          this.pageCalls,
+          () =>
+            this.bridge!.rebuildPageContainer(new RebuildPageContainer(page)),
+        );
+      } catch (error) {
+        throw new DisplayError(
+          "PAGE",
+          `B-rebuild-invalid/compat-restore-${exceptionCode(error)}`,
+        );
+      }
+      if (restored !== true)
+        throw new DisplayError(
+          "PAGE",
+          "B-rebuild-invalid/compat-restore-invalid",
+        );
+      this.compatibilityLayout = true;
+    }
     this.pageCreated = true;
   }
   /** Diagnostic caller must hold navigation idle. No location/provider access. */
@@ -573,7 +646,7 @@ export class EvenDevice {
       this.legacyMapPixels = undefined;
       this.legacyIconKey = undefined;
       this.legacyTextValues.clear();
-      this.compatibilityAnnounced = false;
+      this.layoutAnnounced = false;
       this.onHealth(
         this.connected ? "G2 已连接" : "G2 已断开；手机继续显示导航",
       );
@@ -735,7 +808,7 @@ export class EvenDevice {
     this.pageFailure = undefined;
     this.quadrantPixels = [];
     this.compatibilityLayout = false;
-    this.compatibilityAnnounced = false;
+    this.layoutAnnounced = false;
     this.legacyMapPixels = undefined;
     this.legacyIconKey = undefined;
     this.legacyTextValues.clear();
