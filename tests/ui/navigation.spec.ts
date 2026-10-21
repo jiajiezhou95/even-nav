@@ -2340,18 +2340,21 @@ for (const transfers of [0, 1, 2])
     const confirm = async (action: string) => {
       await expect(page.locator(`[data-transit="${action}"]`)).toHaveCount(1);
       const before = await snapshot();
-      if (transfers === 2 && action === "BOARDED" && before.leg === 1)
-        await page.evaluate(() => (window as any).waitForTransitFrame());
+      // Phone state can advance before the asynchronous native image submission.
+      // Every variant must wait for the actual display before sending menu gestures.
+      await page.evaluate(() => (window as any).waitForTransitFrame());
       const menuBackground = await page.evaluate(
         () => (window as any).hudImages[2],
       );
       await page.evaluate(() => (window as any).emitGesture(3, 20));
-      if (transfers === 2 && action === "BOARDED" && before.leg === 1) {
-        await page.evaluate(async (background) => {
+      await page.evaluate(
+        async ({ background, action }) => {
           const path = "/src/hud-menu.ts";
           const { renderHudMenuTile, HUD_MENU_ITEMS } = await import(path);
+          const guidancePath = "/src/guidance.ts";
+          const { transitActionLabels } = await import(guidancePath);
           const bytes = await renderHudMenuTile(0, new Uint8Array(background), [
-            { label: "已上车", action: "BOARDED" },
+            { label: transitActionLabels[action], action },
             ...HUD_MENU_ITEMS,
           ]);
           for (let i = 0; i < 100; i++) {
@@ -2363,7 +2366,10 @@ for (const transfers of [0, 1, 2])
             await new Promise((resolve) => setTimeout(resolve, 20));
           }
           throw new Error("Transit menu did not reach h1");
-        }, menuBackground);
+        },
+        { background: menuBackground, action },
+      );
+      if (transfers === 2 && action === "BOARDED" && before.leg === 1) {
         await saveNative(".local/evidence/hud-transit-board-menu-native.png");
       }
       await page.evaluate(() => (window as any).emitGesture(0, 20));
