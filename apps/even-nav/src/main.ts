@@ -19,6 +19,7 @@ import {
   type RouteChoiceAction,
 } from "./device";
 import { NavigationMap } from "./map";
+import { routeOverviewSteps } from "./route-overview";
 import { staleThreshold } from "./freshness";
 import { createCredentialStore, DeviceCredentials } from "./credentials";
 import {
@@ -99,6 +100,7 @@ let mapBusy = false,
 let zoomRedraw: ReturnType<typeof setTimeout> | undefined;
 let navigationViewKey = "";
 let routeOverview = false;
+let glassesChoiceMapVersion: number | undefined;
 let directionHistory: DeviceFix[] = [];
 let pageSuspended = false,
   lifecycleEpoch = 0;
@@ -535,6 +537,7 @@ async function importInput(text: string) {
 async function plan(fromGlasses = false) {
   if (busy || !candidateChosen || !destination?.coordinate) return;
   routeOverview = false;
+  glassesChoiceMapVersion = undefined;
   device.setOverview(false);
   lastMapFrame = undefined;
   const intent = session.snapshot.intent!;
@@ -591,6 +594,7 @@ async function plan(fromGlasses = false) {
         )
           $("#workflow").scrollIntoView({ behavior: "auto", block: "start" });
       });
+      if (fromGlasses) glassesChoiceMapVersion = request.version;
       void drawMap();
       if (fromGlasses)
         device.showRouteChoices(
@@ -669,6 +673,7 @@ function onFix(value: DeviceFix) {
   }
 }
 async function stopNavigation(close: boolean) {
+  glassesChoiceMapVersion = undefined;
   routeOverview = false;
   device.setOverview(false);
   if (zoomRedraw) clearTimeout(zoomRedraw);
@@ -722,7 +727,13 @@ async function handleAction(action: DeviceAction, choice?: RouteChoiceAction) {
       return;
     }
     routeOverview = action === "VIEW_ROUTE";
-    device.setOverview(routeOverview);
+    const state = session.snapshot;
+    device.setOverview(
+      routeOverview,
+      routeOverview && state.route
+        ? routeOverviewSteps(state.route, state.legIndex, state.stepIndex)
+        : [],
+    );
     lastFrame = 0;
     render();
     await drawMap();
@@ -828,7 +839,9 @@ async function drawMap() {
   try {
     const bearing = currentMovementBearing();
     const glassesMap =
-      device.connected && ["NAVIGATING", "ARRIVED"].includes(state.phase);
+      device.connected &&
+      (["NAVIGATING", "ARRIVED"].includes(state.phase) ||
+        glassesChoiceMapVersion === version);
     map.setSize(glassesMap ? 576 : 288, glassesMap ? 192 : 144);
     await map.draw(
       center,
@@ -853,6 +866,28 @@ async function drawMap() {
     mapError = "";
     if (
       map.ready &&
+      state.phase === "ROUTE_SELECTION" &&
+      glassesChoiceMapVersion === version
+    ) {
+      const pixels = await map.pixels();
+      if (
+        session.snapshot.version === version &&
+        session.snapshot.phase === "ROUTE_SELECTION" &&
+        glassesChoiceMapVersion === version
+      ) {
+        glassesChoiceMapVersion = undefined;
+        device.setRouteChoiceBackground({
+          sequence: ++sequence,
+          version,
+          pixels,
+          instruction: "选择路线 · 尚未开始导航",
+          status: "滑动选择 · 单击开始 · 双击取消",
+          attribution: map.attribution,
+        });
+      }
+    }
+    if (
+      map.ready &&
       device.connected &&
       ["NAVIGATING", "ARRIVED"].includes(state.phase) &&
       Date.now() - lastFrame >= 1000
@@ -871,6 +906,7 @@ async function drawMap() {
       };
       device.queue.push({
         sequence: ++sequence,
+        overview,
         version,
         pixels,
         icon: { key: icon, pixels: iconPixels },

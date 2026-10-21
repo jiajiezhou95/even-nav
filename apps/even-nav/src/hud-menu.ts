@@ -13,6 +13,119 @@ export interface HudRouteChoice {
   summary: string;
 }
 
+export interface HudRouteStep {
+  text: string;
+  current: boolean;
+}
+export interface HudStepPage {
+  lines: string[];
+  step: number;
+  total: number;
+  current: boolean;
+  page: number;
+  pages: number;
+}
+
+/** Break by measured glyph width, retaining every character across page boundaries. */
+export function buildHudStepPages(
+  steps: readonly HudRouteStep[],
+  measure?: (text: string) => number,
+): HudStepPage[] {
+  if (!measure) {
+    const ctx = document.createElement("canvas").getContext("2d")!;
+    ctx.font = '20px "Microsoft YaHei", "PingFang SC", sans-serif';
+    measure = (text) => ctx.measureText(text).width;
+  }
+  return steps.flatMap((step, index) => {
+    const lines: string[] = [];
+    let line = "";
+    for (const char of step.text) {
+      if (char === "\n") {
+        lines.push(line + char);
+        line = "";
+        continue;
+      }
+      if (line && measure!(line + char) > 162) {
+        lines.push(line);
+        line = "";
+      }
+      line += char;
+    }
+    if (line || !lines.length) lines.push(line);
+    const pages = Math.ceil(lines.length / 4);
+    return Array.from({ length: pages }, (_, page) => ({
+      lines: lines.slice(page * 4, page * 4 + 4),
+      step: index + 1,
+      total: steps.length,
+      current: step.current,
+      page: page + 1,
+      pages,
+    }));
+  });
+}
+
+export async function renderHudListTile(
+  background: Uint8Array | undefined,
+  content:
+    | { routes: readonly HudRouteChoice[]; selected: number }
+    | { page: HudStepPage },
+) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 288;
+  canvas.height = 144;
+  const ctx = canvas.getContext("2d")!;
+  if (background) {
+    const bitmap = await createImageBitmap(
+      new Blob([new Uint8Array(background)], { type: "image/png" }),
+    );
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close();
+  }
+  ctx.fillStyle = "#000";
+  ctx.fillRect(108, 0, 180, 144);
+  ctx.strokeStyle = "#fff";
+  ctx.strokeRect(108.5, 0.5, 179, 143);
+  ctx.fillStyle = "#fff";
+  ctx.textBaseline = "middle";
+  ctx.font = '20px "Microsoft YaHei", "PingFang SC", sans-serif';
+  if ("routes" in content) {
+    content.routes.forEach((route, i) => {
+      const y = 14 + i * 46;
+      if (i === content.selected) ctx.fillText("›", 115, y);
+      ctx.fillText(`路线 ${i + 1}`, 133, y);
+      const summary = route.summary.replace(/\s+/g, "");
+      ctx.font = '20px "Microsoft YaHei", "PingFang SC", sans-serif';
+      const width = ctx.measureText(summary).width;
+      if (width > 162)
+        ctx.font = `${(20 * 162) / width}px "Microsoft YaHei", "PingFang SC", sans-serif`;
+      ctx.fillText(summary, 117, y + 22);
+      ctx.font = '20px "Microsoft YaHei", "PingFang SC", sans-serif';
+    });
+  } else {
+    const page = content.page;
+    ctx.font = '18px "Microsoft YaHei", "PingFang SC", sans-serif';
+    ctx.fillText(
+      `${page.step}/${page.total}${page.current ? " · 当前" : ""}`,
+      117,
+      15,
+    );
+    ctx.font = '20px "Microsoft YaHei", "PingFang SC", sans-serif';
+    page.lines.forEach((line, i) =>
+      ctx.fillText(line.replace(/[\r\n]/g, ""), 117, 43 + i * 22),
+    );
+    ctx.font = '16px "Microsoft YaHei", "PingFang SC", sans-serif';
+    ctx.fillText(`${page.page}/${page.pages}页 · 双击返回`, 117, 132);
+  }
+  const blob = await new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob(
+      (value) =>
+        value ? resolve(value) : reject(new Error("List PNG encoding failed")),
+      "image/png",
+    ),
+  );
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
 /** Only h1 changes: keep the rest of the last navigation presentation visible. */
 export async function renderHudMenuTile(
   selected: number,

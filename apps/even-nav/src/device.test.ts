@@ -9,7 +9,11 @@ import {
 import { project, unproject } from "./map";
 import { staleInstruction } from "./freshness";
 import { getEvenBridge } from "./runtime";
-import { renderHudMenu, renderHudMenuTile } from "./hud-menu";
+import {
+  renderHudMenu,
+  renderHudMenuTile,
+  renderHudListTile,
+} from "./hud-menu";
 import {
   CreateStartUpPageContainer,
   RebuildPageContainer,
@@ -31,7 +35,17 @@ vi.mock("./runtime", () => ({
   isEvenHost: () => true,
   getEvenBridge: vi.fn(),
 }));
-vi.mock("./hud-menu", () => ({
+vi.mock("./hud-menu", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./hud-menu")>()),
+  buildHudStepPages: (steps: { text: string; current: boolean }[]) =>
+    steps.map((step, index) => ({
+      lines: [step.text],
+      step: index + 1,
+      total: steps.length,
+      current: step.current,
+      page: 1,
+      pages: 1,
+    })),
   HUD_MENU_ITEMS: [
     { label: "查看路线", action: "VIEW_ROUTE" },
     { label: "放大地图", action: "ZOOM_IN" },
@@ -46,6 +60,9 @@ vi.mock("./hud-menu", () => ({
   ),
   renderHudMenuTile: vi.fn(async (selected) =>
     new TextEncoder().encode(`overlay/${selected}`),
+  ),
+  renderHudListTile: vi.fn(async (_background, content) =>
+    new TextEncoder().encode(JSON.stringify(content)),
   ),
 }));
 
@@ -123,6 +140,101 @@ async function menuDevice() {
 }
 
 describe("official SDK boundary and display queue", () => {
+  it("scrolls complete overview around current step using one tile, freezes background and exits without zoom", async () => {
+    const { device, bridge, action, frame, emit } = await menuDevice();
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    try {
+      device.setOverview(true, [
+        { text: "过去", current: false },
+        { text: "当前", current: true },
+        { text: "后续", current: false },
+      ]);
+      device.queue.push({ ...frame, sequence: 2, overview: true });
+      await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
+      expect(vi.mocked(renderHudListTile).mock.lastCall?.[1]).toMatchObject({
+        page: { step: 2, current: true },
+      });
+      const before = bridge.updateImageRawData.mock.calls.length;
+      device.queue.push({
+        ...frame,
+        sequence: 3,
+        overview: true,
+        pixels: new Uint8Array([3]),
+      });
+      expect(device.queue.inFlight).toBe(false);
+      emit(1);
+      emit(1);
+      await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
+      expect(vi.mocked(renderHudListTile).mock.lastCall?.[1]).toMatchObject({
+        page: { step: 1 },
+      });
+      now.mockReturnValue(1400);
+      emit(2);
+      await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
+      now.mockReturnValue(1800);
+      emit(2);
+      await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
+      expect(vi.mocked(renderHudListTile).mock.lastCall?.[1]).toMatchObject({
+        page: { step: 3 },
+      });
+      expect(
+        bridge.updateImageRawData.mock.calls
+          .slice(before)
+          .map(([v]) => v.containerID),
+      ).toEqual([2, 2, 2]);
+      expect(action).not.toHaveBeenCalled();
+      emit(3);
+      expect(action).toHaveBeenCalledExactlyOnceWith("EXIT_OVERVIEW");
+      device.setOverview(false);
+      device.queue.push({ ...frame, sequence: 4, pixels: new Uint8Array([4]) });
+      await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
+      expect(vi.mocked(renderHud).mock.lastCall?.[0].pixels[0]).toBe(4);
+      device.setVersion(1);
+      now.mockReturnValue(2200);
+      emit(3);
+      expect(action).toHaveBeenCalledTimes(1);
+    } finally {
+      now.mockRestore();
+    }
+  });
+  it("uses a safe static map behind route choices and changes only h1 for subsequent choices", async () => {
+    const { device, bridge, frame, emit, action } = await menuDevice();
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    try {
+      device.showRouteChoices(
+        [
+          { id: "a", summary: "3分钟" },
+          { id: "b", summary: "4分钟" },
+        ],
+        "a",
+        7,
+        { ...frame, version: 7, instruction: "选择路线 · 尚未开始导航" },
+      );
+      await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
+      const before = bridge.updateImageRawData.mock.calls.length;
+      emit(2);
+      emit(2);
+      await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
+      expect(
+        bridge.updateImageRawData.mock.calls
+          .slice(before)
+          .map(([v]) => v.containerID),
+      ).toEqual([2]);
+      expect(action).toHaveBeenCalledExactlyOnceWith("SELECT_ROUTE", {
+        routeId: "b",
+        version: 7,
+      });
+      now.mockReturnValue(1400);
+      emit(3);
+      await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
+      const cancelled = bridge.updateImageRawData.mock.calls.length;
+      device.setRouteChoiceBackground({ ...frame, version: 7 });
+      expect(device.queue.inFlight).toBe(false);
+      expect(bridge.updateImageRawData.mock.calls.length).toBe(cancelled);
+    } finally {
+      now.mockRestore();
+    }
+  });
   it.each([
     { type: "textEvent", jsonData: { Event_Type: 0, Container_ID: 5 } },
     { type: "textEvent", jsonData: { Container_ID: 5 } },
@@ -248,7 +360,9 @@ describe("official SDK boundary and display queue", () => {
       });
       device.selectRouteFromPhone("a", 7);
       await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
-      expect(vi.mocked(renderHudMenu).mock.lastCall?.[0]).toBe(0);
+      expect(vi.mocked(renderHudListTile).mock.lastCall?.[1]).toMatchObject({
+        selected: 0,
+      });
       emit(0);
       emit(0);
       await vi.waitFor(() =>

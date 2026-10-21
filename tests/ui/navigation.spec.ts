@@ -1534,8 +1534,13 @@ test("SDK scroll gestures zoom the active map without rerouting and ignore non-n
     return route.fulfill({
       json: {
         requestVersion: request.requestVersion,
-        routes: [0, 1].map((i) => ({
-          id: i === 0 ? "synthetic-road" : "synthetic-second",
+        routes: [0, 1, 2].map((i) => ({
+          id:
+            i === 0
+              ? "synthetic-road"
+              : i === 1
+                ? "synthetic-second"
+                : "synthetic-third",
           provider: "GOOGLE_ROUTES",
           basemapProvider: "GOOGLE_TILES",
           fetchedAt: new Date().toISOString(),
@@ -1552,7 +1557,10 @@ test("SDK scroll gestures zoom the active map without rerouting and ignore non-n
               geometry: [request.origin, request.destination.coordinate],
               steps: [
                 {
-                  instruction: i === 0 ? "沿道路前行" : "沿第二路线前行",
+                  instruction:
+                    i === 0
+                      ? "沿道路前行，经过中央车站东出口后右转进入地下通道。\n在第二个路口左转，沿人行道继续前行至公交站。"
+                      : "沿第二路线前行",
                   geometry: [request.origin, request.destination.coordinate],
                   distanceMeters: i === 0 ? 230 : 450,
                   durationSeconds: 180 + i * 60,
@@ -1634,6 +1642,35 @@ test("SDK scroll gestures zoom the active map without rerouting and ignore non-n
     };
     (window as any).hudImages = {};
     (window as any).hudWriteCount = 0;
+    (window as any).hudWriteIds = [];
+    (window as any).waitForList = async (content: unknown) => {
+      const path = "/src/hud-menu.ts";
+      const { renderHudListTile } = await import(path);
+      const expected = await renderHudListTile(undefined, content);
+      const panel = async (bytes: Uint8Array) => {
+        const bitmap = await createImageBitmap(
+          new Blob([new Uint8Array(bytes)], { type: "image/png" }),
+        );
+        const canvas = document.createElement("canvas");
+        canvas.width = 288;
+        canvas.height = 144;
+        const ctx = canvas.getContext("2d")!;
+        ctx.drawImage(bitmap, 0, 0);
+        bitmap.close();
+        return ctx.getImageData(108, 0, 180, 144).data;
+      };
+      const pixels = await panel(expected);
+      for (let attempt = 0; attempt < 150; attempt++) {
+        if ((window as any).hudImages[2]) {
+          const actual = await panel(
+            new Uint8Array((window as any).hudImages[2]),
+          );
+          if (pixels.every((v: number, i: number) => v === actual[i])) return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      throw new Error("Native h1 list did not match expected text page");
+    };
     (window as any).rebuildCalls = 0;
     (window as any).mockNative = true;
     (window as any).emitScroll = async (eventType: number, count = 1) => {
@@ -1688,6 +1725,7 @@ test("SDK scroll gestures zoom the active map without rerouting and ignore non-n
       }) => {
         (window as any).hudImages[value.containerID] = value.imageData;
         (window as any).hudWriteCount++;
+        (window as any).hudWriteIds.push(value.containerID);
         return "success";
       },
       shutDownPageContainer: async () => true,
@@ -1731,6 +1769,62 @@ test("SDK scroll gestures zoom the active map without rerouting and ignore non-n
     .toEqual(["synthetic-road"]);
   expect(routeCalls).toBe(1);
   await page.screenshot({ path: ".local/evidence/overview-phone.png" });
+  await page.evaluate(async () => {
+    const path = "/src/hud-menu.ts";
+    const { buildHudStepPages } = await import(path);
+    (window as any).overviewPages = buildHudStepPages([
+      {
+        text: "沿道路前行，经过中央车站东出口后右转进入地下通道。\n在第二个路口左转，沿人行道继续前行至公交站。 · 230米",
+        current: true,
+      },
+    ]);
+    await (window as any).waitForList({
+      page: (window as any).overviewPages[0],
+    });
+  });
+  const overviewBefore = await page.evaluate(
+    () => (window as any).hudWriteCount,
+  );
+  const overviewViewport = viewports.at(-1);
+  await page.evaluate(() => (window as any).emitScroll(2, 20));
+  await page.evaluate(() =>
+    (window as any).waitForList({ page: (window as any).overviewPages[1] }),
+  );
+  expect(
+    await page.evaluate(() => (window as any).hudWriteIds.slice(-1)),
+  ).toEqual([2]);
+  expect(await page.evaluate(() => (window as any).hudWriteCount)).toBe(
+    overviewBefore + 1,
+  );
+  expect(viewports.at(-1)).toBe(overviewViewport);
+  console.log(
+    "OVERVIEW_PAGE_TRANSPORT",
+    await page.evaluate(() => ({
+      writes: 1,
+      bytes: (window as any).hudImages[2].length,
+    })),
+  );
+  const overviewPng = await page.evaluate(async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 576;
+    canvas.height = 288;
+    for (let i = 0; i < 4; i++) {
+      const bitmap = await createImageBitmap(
+        new Blob([new Uint8Array((window as any).hudImages[i + 1])], {
+          type: "image/png",
+        }),
+      );
+      canvas
+        .getContext("2d")!
+        .drawImage(bitmap, (i % 2) * 288, Math.floor(i / 2) * 144);
+      bitmap.close();
+    }
+    return canvas.toDataURL().split(",")[1];
+  });
+  await writeFile(
+    ".local/evidence/hud-overview-steps-native.png",
+    Buffer.from(overviewPng, "base64"),
+  );
   await page.evaluate(() => (window as any).emitScroll(3, 20));
   await expect
     .poll(() => page.evaluate(() => (window as any).mapViews.at(-1)))
@@ -1817,30 +1911,55 @@ test("SDK scroll gestures zoom the active map without rerouting and ignore non-n
   expect(routeCalls).toBe(2);
   await expect(page.getByRole("button", { name: "开始导航 ↗" })).toBeVisible();
   expect(await page.evaluate(() => (window as any).rebuildCalls)).toBe(1);
+  await page.evaluate(() =>
+    (window as any).waitForList({
+      selected: 0,
+      routes: [
+        { id: "synthetic-road", summary: "3 分钟 · 230 m" },
+        { id: "synthetic-second", summary: "4 分钟 · 450 m" },
+        { id: "synthetic-third", summary: "5 分钟 · 450 m" },
+      ],
+    }),
+  );
+  // Initial safe map presentation completes before measuring a list-only selection.
+  await expect
+    .poll(() => page.evaluate(() => (window as any).mapViews.at(-1)))
+    .toEqual(["synthetic-road", "synthetic-second", "synthetic-third"]);
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 288;
+        canvas.height = 144;
+        const bitmap = await createImageBitmap(
+          new Blob([new Uint8Array((window as any).hudImages[4])], {
+            type: "image/png",
+          }),
+        );
+        const ctx = canvas.getContext("2d")!;
+        ctx.drawImage(bitmap, 0, 0);
+        bitmap.close();
+        const pixels = ctx.getImageData(0, 112, 288, 32).data;
+        let lit = 0;
+        for (let i = 0; i < pixels.length; i += 4) if (pixels[i] > 128) lit++;
+        return lit;
+      }),
+    )
+    .toBeGreaterThan(100);
+  const choiceBefore = await page.evaluate(() => (window as any).hudWriteCount);
   await page.evaluate(() => (window as any).emitScroll(2, 20));
   await expect(
     page.getByRole("tab", { name: "路线 2 4 分钟", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   const choicesPng = await page.evaluate(async () => {
-    const path = "/src/hud-menu.ts";
-    const { renderHudMenu } = await import(path);
-    const expected = await renderHudMenu(1, undefined, [
-      { id: "synthetic-road", summary: "3 分钟 · 230 m" },
-      { id: "synthetic-second", summary: "4 分钟 · 450 m" },
-    ]);
-    for (let attempt = 0; attempt < 100; attempt++) {
-      if (
-        expected.every(
-          (bytes: Uint8Array, i: number) =>
-            JSON.stringify(Array.from(bytes)) ===
-            JSON.stringify((window as any).hudImages[i + 1]),
-        )
-      )
-        break;
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      if (attempt === 99)
-        throw new Error("Route choices never reached native containers");
-    }
+    await (window as any).waitForList({
+      selected: 1,
+      routes: [
+        { id: "synthetic-road", summary: "3 分钟 · 230 m" },
+        { id: "synthetic-second", summary: "4 分钟 · 450 m" },
+        { id: "synthetic-third", summary: "5 分钟 · 450 m" },
+      ],
+    });
     const canvas = document.createElement("canvas");
     canvas.width = 576;
     canvas.height = 288;
@@ -1860,6 +1979,35 @@ test("SDK scroll gestures zoom the active map without rerouting and ignore non-n
   await writeFile(
     ".local/evidence/hud-route-choices-native.png",
     Buffer.from(choicesPng, "base64"),
+  );
+  // A real static map must remain below the narrow candidate selector, not the invalid-size fallback.
+  const choiceMapPixels = await page.evaluate(async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 288;
+    canvas.height = 144;
+    const bitmap = await createImageBitmap(
+      new Blob([new Uint8Array((window as any).hudImages[3])], {
+        type: "image/png",
+      }),
+    );
+    const ctx = canvas.getContext("2d")!;
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    const pixels = ctx.getImageData(0, 0, 288, 80).data;
+    let lit = 0;
+    for (let i = 0; i < pixels.length; i += 4) if (pixels[i] > 0) lit++;
+    return lit;
+  });
+  expect(choiceMapPixels).toBeGreaterThan(1000);
+  expect(await page.evaluate(() => (window as any).hudWriteCount)).toBe(
+    choiceBefore + 1,
+  );
+  console.log(
+    "ROUTE_CHOICE_TRANSPORT",
+    await page.evaluate(() => ({
+      writes: 1,
+      bytes: (window as any).hudImages[2].length,
+    })),
   );
   const beforeRestart = await page.evaluate(
     () => (window as any).hudWriteCount,

@@ -29,6 +29,10 @@ import {
   HUD_MENU_ITEMS,
   renderHudMenu,
   renderHudMenuTile,
+  renderHudListTile,
+  buildHudStepPages,
+  type HudRouteStep,
+  type HudStepPage,
   type HudRouteChoice,
 } from "./hud-menu";
 
@@ -202,6 +206,7 @@ function exceptionCode(error: unknown): string {
   return error instanceof DOMException ? error.name : "exception";
 }
 export interface HudFrame {
+  overview?: boolean;
   sequence: number;
   version: number;
   pixels: Uint8Array;
@@ -300,8 +305,16 @@ export class EvenDevice {
   private menuSelected = 0;
   private menuBackground?: Uint8Array;
   private requestingPresentation = false;
-  private routeChoices?: { version: number; items: HudRouteChoice[] };
+  private routeChoices?: {
+    version: number;
+    items: HudRouteChoice[];
+    background?: HudFrame;
+    ready?: boolean;
+  };
   private overview = false;
+  private stepPages: HudStepPage[] = [];
+  private stepPage = 0;
+  private overviewReady = false;
   private displayMessage?: string;
   private presentationEpoch = 0;
   private pendingClick?: ReturnType<typeof setTimeout>;
@@ -324,6 +337,7 @@ export class EvenDevice {
           return;
         await this.ensurePage();
         if (frame.version !== this.version || !this.connected) return;
+        if (this.overview && !frame.overview) return;
         const presentation = this.presentationEpoch;
         if (this.compatibilityLayout) {
           if (!(await this.sendCompatibilityFrame(frame))) return;
@@ -338,13 +352,41 @@ export class EvenDevice {
                     this.menuBackground,
                   ),
                 ]
-              : this.displayMessage || this.routeChoices
-                ? await renderHudMenu(
-                    this.menuSelected,
-                    this.displayMessage,
-                    this.routeChoices?.items,
-                  )
-                : await renderHud(frame);
+              : this.routeChoices
+                ? [
+                    undefined,
+                    await renderHudListTile(this.menuBackground, {
+                      routes: this.routeChoices.items,
+                      selected: this.menuSelected,
+                    }),
+                  ]
+                : this.overview && this.overviewReady && this.stepPages.length
+                  ? [
+                      undefined,
+                      await renderHudListTile(this.menuBackground, {
+                        page: this.stepPages[this.stepPage],
+                      }),
+                    ]
+                  : this.displayMessage
+                    ? await renderHudMenu(
+                        this.menuSelected,
+                        this.displayMessage,
+                      )
+                    : await renderHud(frame);
+            if (this.overview && !this.overviewReady && this.stepPages.length) {
+              this.menuBackground = quadrants[1]?.slice();
+              quadrants[1] = await renderHudListTile(this.menuBackground, {
+                page: this.stepPages[this.stepPage],
+              });
+            }
+            if (this.routeChoices?.background && !this.routeChoices.ready) {
+              quadrants = await renderHud(this.routeChoices.background);
+              this.menuBackground = quadrants[1]?.slice();
+              quadrants[1] = await renderHudListTile(this.menuBackground, {
+                routes: this.routeChoices.items,
+                selected: this.menuSelected,
+              });
+            }
           } catch (error) {
             throw new DisplayError("RENDER", exceptionCode(error));
           }
@@ -392,6 +434,8 @@ export class EvenDevice {
           at: Date.now(),
           result: "success",
         };
+        if (this.overview) this.overviewReady = true;
+        if (this.routeChoices?.background) this.routeChoices.ready = true;
         if (!this.layoutAnnounced) {
           this.layoutAnnounced = true;
           this.lastDisplayFailure = undefined;
@@ -440,7 +484,13 @@ export class EvenDevice {
           !this.routeChoices
         )
           this.latestFrame = frame;
-        if (this.menuOpen && !this.requestingPresentation) return false;
+        if (
+          (this.menuOpen ||
+            this.routeChoices ||
+            (this.overview && this.overviewReady)) &&
+          !this.requestingPresentation
+        )
+          return false;
       },
     );
   }
@@ -471,6 +521,7 @@ export class EvenDevice {
     items: HudRouteChoice[],
     selectedId: string,
     version: number,
+    background?: HudFrame,
   ) {
     if (!this.connected || this.compatibilityLayout || !items.length) return;
     this.setVersion(version);
@@ -479,7 +530,8 @@ export class EvenDevice {
     this.overview = false;
     this.displayMessage = undefined;
     this.latestFrame = undefined;
-    this.routeChoices = { version, items: items.slice(0, 3) };
+    this.routeChoices = { version, items: items.slice(0, 3), background };
+    this.menuBackground = this.quadrantPixels[1]?.slice();
     this.menuSelected = Math.max(
       0,
       this.routeChoices.items.findIndex((item) => item.id === selectedId),
@@ -494,8 +546,21 @@ export class EvenDevice {
     this.cancelMenuClick();
     this.redrawPresentation();
   }
-  setOverview(value: boolean) {
+  setRouteChoiceBackground(frame: HudFrame) {
+    if (!this.routeChoices || this.routeChoices.version !== frame.version)
+      return;
+    this.routeChoices.background = frame;
+    this.routeChoices.ready = false;
+    this.redrawPresentation();
+  }
+  setOverview(value: boolean, steps: HudRouteStep[] = []) {
     this.overview = value;
+    this.overviewReady = false;
+    this.stepPages = value ? buildHudStepPages(steps) : [];
+    this.stepPage = Math.max(
+      0,
+      this.stepPages.findIndex((page) => page.current),
+    );
     this.menuOpen = false;
     this.cancelMenuClick();
     this.presentationEpoch++;
@@ -518,6 +583,8 @@ export class EvenDevice {
     });
   }
   private resetPresentation() {
+    this.stepPages = [];
+    this.overviewReady = false;
     this.routeChoices = undefined;
     this.menuOpen = false;
     this.menuBackground = undefined;
@@ -843,7 +910,11 @@ export class EvenDevice {
     });
     this.unsubscribeEvents = this.bridge.onEvenHubEvent((event) => {
       const item = event.menuItemClickEvent?.itemID;
-      if ((this.menuOpen || this.routeChoices) && item !== undefined) return;
+      if (
+        (this.menuOpen || this.routeChoices || this.overview) &&
+        item !== undefined
+      )
+        return;
       if (item === 1) this.onAction("PAUSE");
       if (item === 2) this.onAction("RESUME");
       if (item === 3) this.onAction("END");
@@ -922,6 +993,21 @@ export class EvenDevice {
         return;
       if (now - this.lastScrollAt < 250) return;
       this.lastScrollAt = now;
+      if (this.overview) {
+        const next = Math.max(
+          0,
+          Math.min(
+            this.stepPages.length - 1,
+            this.stepPage +
+              (eventType === OsEventTypeList.SCROLL_TOP_EVENT ? -1 : 1),
+          ),
+        );
+        if (next !== this.stepPage) {
+          this.stepPage = next;
+          this.redrawPresentation();
+        }
+        return;
+      }
       if (this.routeChoices) {
         this.cancelMenuClick();
         this.menuSelected =
