@@ -49,7 +49,30 @@ export interface RouteStep {
   durationSeconds: number;
   maneuver?: string;
 }
+export interface StationAccess {
+  source: "NAVITIME";
+  fetchedAt: string;
+  nodeId: string;
+  lineId: string;
+  selection: "UNSELECTED_CANDIDATES";
+  gateways: {
+    name: string;
+    coordinate: Coordinate;
+    directions: ("up" | "down")[];
+  }[];
+}
+export interface NavitimeStatus {
+  exits:
+    | "NOT_CONFIGURED"
+    | "NO_MATCH"
+    | "AVAILABLE"
+    | "PARTIAL"
+    | "UNAVAILABLE"
+    | "LIMIT_REACHED";
+  platforms: "NOT_INCLUDED_IN_FREE_TRANSPORT";
+}
 export interface RouteStop {
+  stationAccess?: StationAccess;
   name?: string;
   coordinate?: Coordinate;
   platform?: string;
@@ -81,6 +104,7 @@ export interface RouteLeg {
   staySeated?: boolean;
 }
 export interface Route {
+  navitime?: NavitimeStatus;
   id: string;
   provider: "GOOGLE_ROUTES" | "TRANSITOUS" | "ORS";
   basemapProvider: "GOOGLE_TILES" | "OPEN_MAP";

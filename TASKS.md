@@ -28,3 +28,9 @@ Source SHA256: A9A8649EE17BC583598F8DC42947B1B7CD3D69B7D2945CF5E5A311C8C343B753
 Source hash unchanged. See TEST_REPORT.md for current evidence overriding initial NOT RUN discovery rows.
 Implemented/tested G0 parser+resolver+UI, G1/G2 adapters, provenance/caps, state/progress, same-frame renderer and SDK path. 222 deterministic tests and6 UI tests PASS. Public expansion11/12 and private expansion2/2; all resolved candidates still need enrichment. Actual Google routes/maps BLOCKED; Transitous live transport FAIL; real G2/lockscreen NOT RUN. Official ehpk and personal Worker deployment PASS, installation not claimed.
 Next DAG: restore browser control→Google API/key setup→bounded Google live+enrichment; Even local authentication→private upload→hardware/lockscreen; Transitous transport diagnosis only with changed evidence. Root final clean acceptance remains outstanding.
+# NAVITIME follow-up — 2026-10-21
+
+- Implement optional free Transport exit metadata and phone/G2 candidate display; preserve Transitous itinerary/platforms. Owner confirmed personal-use authority.
+- Local integration tests passed; provider live acceptance waits for owner-created Basic account and local `navitimeRapidApiKey` insertion. No provider account/key exists yet; no NAVITIME calls made.
+- Platform query is not included in the free API service. No paid endpoint is called. This portion remains unavailable rather than fabricated.
+- New Beta publication awaits live account/configuration verification; currently published 0.1.21 remains the baseline.

@@ -1,5 +1,7 @@
 # Third-party notices
 
+- Optional NAVITIME Transport data belongs to NAVITIME JAPAN and its licensors. The owner confirmed personal-use authorization; this does not grant public redistribution rights or additional API subscription capabilities. See `docs/NAVITIME_SETUP.md`.
+
 - `@evenrealities/even_hub_sdk` 0.0.16 — MIT, copyright its authors; installed LICENSE governs.
 - `zod` — MIT, copyright its authors; installed LICENSE governs.
 - Vite/TypeScript/Vitest/Playwright and other build/test dependencies retain their own package licenses; lockfile pins the resolved dependency set.

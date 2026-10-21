@@ -1,5 +1,7 @@
 # Privacy
 
+When optional NAVITIME enrichment is configured, the personal Worker sends transit line search text and matched public station/line identifiers to NAVITIME through RapidAPI. Returned exit candidates remain in the active route session; the API key stays in Worker Secrets. GPS samples and the original Google share URL are not sent to NAVITIME. No persistent NAVITIME response cache is used.
+
 Even Nav has no advertising, analytics or default trip history. Share text, endpoint candidates, route data and map viewport are held in the active session. On first pairing, the owner credential is used transiently to obtain an independent device token; the owner credential and Google key are never persisted in the frontend.
 
 Version 0.1.1 persists the device token, Worker origin and expiry in the official Even SDK's app-scoped local storage. Browser development preview uses origin-scoped browser storage. This is not a claim of Keychain or hardware-backed encryption. The token grants backend access; a compromised app context could read it. Server storage contains only its SHA256 hash, owner binding and expiry. Tokens expire after 365 days, and at most eight devices can be active.

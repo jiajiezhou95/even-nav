@@ -17,6 +17,18 @@ function clock(value?: string) {
       }).format(new Date(value))
     : "";
 }
+function stationAccessOverview(leg: Route["legs"][number]): string[] {
+  const seen = new Set<string>();
+  return [leg.fromStop, leg.toStop].flatMap((stop) => {
+    const access = stop?.stationAccess;
+    if (!access?.gateways.length || seen.has(access.nodeId)) return [];
+    seen.add(access.nodeId);
+    return [
+      `${stop?.name ? `${stop.name} · ` : ""}可选出入口（NAVITIME）`,
+      ...new Set(access.gateways.map((gateway) => gateway.name)),
+    ];
+  });
+}
 /** Segment-level information only: walking turn instructions remain in live navigation. */
 export function transitLegOverview(leg: Route["legs"][number]): string {
   const from = leg.fromStop?.name || leg.from;
@@ -51,6 +63,7 @@ export function transitLegOverview(leg: Route["legs"][number]): string {
             /入口|出口|出入口|出站|入站|改札|entrance|\bexit\b/i.test(text),
           ),
       ),
+      ...stationAccessOverview(leg),
     ]
       .filter(Boolean)
       .join("\n");
@@ -61,6 +74,7 @@ export function transitLegOverview(leg: Route["legs"][number]): string {
       [platformText, departure && `出发 ${departure}`]
         .filter(Boolean)
         .join(" · "),
+      ...stationAccessOverview(leg),
     ]
       .filter(Boolean)
       .join("\n");
@@ -90,6 +104,7 @@ export function transitLegOverview(leg: Route["legs"][number]): string {
     `${to || "下车站未提供"}${arrival ? ` · 到达 ${arrival}` : ""}`,
     leg.staySeated ? "直通无需下车" : "",
     leg.realtime ? "含实时数据" : "计划时刻 · 延误未知",
+    ...stationAccessOverview(leg),
   ]
     .filter(Boolean)
     .join("\n");

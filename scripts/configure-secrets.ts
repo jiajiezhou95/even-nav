@@ -4,8 +4,14 @@ const c = JSON.parse(readFileSync(".local/config.json", "utf8"));
 const allowed = new Map([
   ["ACCESS_TOKEN", c.accessToken],
   ["GOOGLE_API_KEY", c.googleApiKey],
+  ["NAVITIME_RAPIDAPI_KEY", c.navitimeRapidApiKey],
 ]);
 for (const [name, value] of allowed) {
+  if (
+    process.argv.includes("--only-navitime") &&
+    name !== "NAVITIME_RAPIDAPI_KEY"
+  )
+    continue;
   if (!value) {
     console.log(`${name}: NOT CONFIGURED`);
     continue;

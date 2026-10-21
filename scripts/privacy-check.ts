@@ -13,7 +13,7 @@ const examined: string[] = [];
 const secrets: string[] = [];
 if (existsSync(".local/config.json")) {
   const local = JSON.parse(readFileSync(".local/config.json", "utf8"));
-  for (const field of ["accessToken", "googleApiKey"])
+  for (const field of ["accessToken", "googleApiKey", "navitimeRapidApiKey"])
     if (typeof local[field] === "string" && local[field].length >= 12)
       secrets.push(local[field]);
 }

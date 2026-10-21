@@ -4,6 +4,86 @@ import { routeOverviewSteps, transitLegOverview } from "./route-overview";
 import type { Route } from "../../../packages/contracts/src/index";
 
 describe("complete route overview text", () => {
+  it("lists NAVITIME station exits as unselected candidates without changing platform or navigation steps", () => {
+    const leg: Route["legs"][number] = {
+      mode: "RIDE",
+      line: "試験線",
+      distanceMeters: 1000,
+      durationSeconds: 300,
+      geometry: [],
+      steps: [],
+      fromStop: { name: "甲駅", platform: "2" },
+      toStop: { name: "乙駅" },
+    };
+    const baseline = transitLegOverview(leg);
+    expect(baseline).not.toContain("可选出入口");
+    const access: NonNullable<
+      NonNullable<typeof leg.fromStop>["stationAccess"]
+    > = {
+      source: "NAVITIME",
+      fetchedAt: "2026-10-21T00:00:00Z",
+      nodeId: "test-node",
+      lineId: "test-line",
+      selection: "UNSELECTED_CANDIDATES",
+      gateways: Array.from({ length: 20 }, (_, i) => ({
+        name: `A${i + 1}口`,
+        coordinate: { lat: 35, lng: 139 },
+        directions: ["up", "down"],
+      })),
+    };
+    const enriched = {
+      ...leg,
+      fromStop: { ...leg.fromStop, stationAccess: access },
+      toStop: {
+        ...leg.toStop,
+        stationAccess: {
+          ...access,
+          nodeId: "other-node",
+          gateways: [{ ...access.gateways[0], name: "東口 <中央> & 連絡口" }],
+        },
+      },
+    };
+    const text = transitLegOverview(enriched);
+    expect(text.startsWith(baseline)).toBe(true);
+    expect(text).toContain("甲駅 · 可选出入口（NAVITIME）\nA1口\nA2口");
+    expect(text).toContain(
+      "乙駅 · 可选出入口（NAVITIME）\n東口 <中央> & 連絡口",
+    );
+    expect(text).toContain("2站台");
+    expect(text).not.toMatch(/推荐|从A1口|选择A1口/);
+    expect(enriched.steps).toEqual([]);
+    const pages = buildHudStepPages(
+      routeOverviewSteps(
+        { provider: "TRANSITOUS", legs: [enriched] } as Route,
+        0,
+        0,
+      ),
+      (value) => value.length * 22,
+    );
+    const all = pages.flatMap((page) => page.lines).join("");
+    for (const gateway of access.gateways) expect(all).toContain(gateway.name);
+    expect(all).toContain("東口 <中央> & 連絡口");
+    const sameStation = {
+      ...enriched,
+      toStop: enriched.fromStop,
+    };
+    expect(transitLegOverview(sameStation).match(/可选出入口/g)).toHaveLength(
+      1,
+    );
+    expect(
+      transitLegOverview({
+        ...leg,
+        fromStop: {
+          ...leg.fromStop,
+          stationAccess: { ...access, gateways: [] },
+        },
+      }),
+    ).toBe(baseline);
+    for (const mode of ["WALK", "WAIT", "TRANSFER"] as const)
+      expect(transitLegOverview({ ...enriched, mode })).toContain(
+        "可选出入口（NAVITIME）\nA1口\nA2口",
+      );
+  });
   it("retains long Chinese and newlines across nine-line full-width pages and packs short steps together", () => {
     const text =
       "前往中央车站东出口，经过地下通道后右转。\n在第二个路口左转，沿人行道继续前行至公交站。".repeat(

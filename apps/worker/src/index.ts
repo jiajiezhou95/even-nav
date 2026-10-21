@@ -1,3 +1,4 @@
+import { enrichNavitime } from "../../../packages/providers/src/navitime";
 import { z } from "zod";
 import { authenticate, pairDevice, revokeDevice } from "./auth";
 import { NavError } from "../../../packages/contracts/src/index";
@@ -22,6 +23,7 @@ export { QuotaLedger } from "./quota";
 export interface Env {
   ACCESS_TOKEN?: string;
   GOOGLE_API_KEY?: string;
+  NAVITIME_RAPIDAPI_KEY?: string;
   ALLOWED_ORIGINS?: string;
   EVEN_APP_LOOPBACK?: string;
   TRANSITOUS_ENABLED?: string;
@@ -164,6 +166,11 @@ export function createWorker(fetcher: Fetcher = fetch) {
                     ? "CONFIGURED_NOT_LIVE_VERIFIED"
                     : "BLOCKED_CONTACT_REQUIRED",
               },
+              navitime: {
+                configured: !!env.NAVITIME_RAPIDAPI_KEY,
+                exits: "UNSELECTED_CANDIDATES",
+                platforms: "NOT_INCLUDED_IN_FREE_TRANSPORT",
+              },
               openMap: { configured: false },
               staticMaps: { enabled: false, cap: 0 },
               quotaConfigured: !!env.QUOTA,
@@ -225,9 +232,14 @@ export function createWorker(fetcher: Fetcher = fetch) {
               await reserve(env.QUOTA, "TRANSIT");
               result = json({
                 requestVersion: t.requestVersion,
-                routes: await transitRoutes(
-                  t,
-                  `EvenNav/0.1.0 (${env.TRANSITOUS_CONTACT})`,
+                routes: await enrichNavitime(
+                  await transitRoutes(
+                    t,
+                    `EvenNav/0.1.0 (${env.TRANSITOUS_CONTACT})`,
+                    fetcher,
+                  ),
+                  env.NAVITIME_RAPIDAPI_KEY,
+                  () => reserve(env.QUOTA, "NAVITIME_TRANSPORT"),
                   fetcher,
                 ),
               });

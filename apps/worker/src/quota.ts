@@ -12,6 +12,7 @@ export const CAPS = {
   SESSION: 100,
   VIEWPORT: 3000,
   TRANSIT: 500,
+  NAVITIME_TRANSPORT: 450,
   IMPORT: 3000,
 } as const;
 export type Sku = keyof typeof CAPS;
@@ -64,13 +65,26 @@ export class QuotaLedger {
         month = now.toISOString().slice(0, 7);
       if (request.method === "GET") {
         const usage = await this.state.storage.get<Usage>(`usage:${month}`);
+        const navitime = await this.state.storage.get<{
+          days: Record<string, number>;
+        }>("navitime:usage");
+        const day = Math.floor(now.getTime() / 86400000);
+        const navitimeRollingUsed = Object.entries(navitime?.days ?? {}).reduce(
+          (sum, [date, count]) =>
+            Number(date) >= day - 31 ? sum + count : sum,
+          0,
+        );
         return Response.json({
           month,
           counts: usage?.counts ?? {},
+          navitimeRollingUsed,
           reservedOperations: usage?.reservedOperations ?? 0,
           warnings: Object.fromEntries(
             Object.entries(caps).map(([sku, cap]) => {
-              const used = usage?.counts[sku] ?? 0;
+              const used =
+                sku === "NAVITIME_TRANSPORT"
+                  ? Math.max(usage?.counts[sku] ?? 0, navitimeRollingUsed)
+                  : (usage?.counts[sku] ?? 0);
               return [
                 sku,
                 {
@@ -113,6 +127,28 @@ export class QuotaLedger {
         }
         if (u.requests >= 120 || (u.counts[sku] ?? 0) >= caps[sku])
           return false;
+        // Rolling 31-day cap avoids resetting the free allowance on a calendar
+        // month boundary when the provider subscription renews on another day.
+        if (sku === "NAVITIME_TRANSPORT") {
+          const day = Math.floor(now.getTime() / 86400000);
+          const usage = (await tx.get<{
+            days: Record<string, number>;
+            recent: number[];
+          }>("navitime:usage")) ?? { days: {}, recent: [] };
+          usage.days = Object.fromEntries(
+            Object.entries(usage.days).filter(([d]) => Number(d) >= day - 31),
+          );
+          usage.recent = usage.recent.filter((t) => t > now.getTime() - 60000);
+          if (
+            usage.recent.length >= 45 ||
+            Object.values(usage.days).reduce((sum, n) => sum + n, 0) >=
+              caps.NAVITIME_TRANSPORT
+          )
+            return false;
+          usage.days[day] = (usage.days[day] ?? 0) + 1;
+          usage.recent.push(now.getTime());
+          await tx.put("navitime:usage", usage);
+        }
         u.requests++;
         u.reservedOperations++;
         u.counts[sku] = (u.counts[sku] ?? 0) + 1;

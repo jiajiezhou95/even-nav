@@ -1,5 +1,7 @@
 # Costs
 
+NAVITIME optional Transport integration (2026-10-21): published Basic allowance is 500 requests per subscription month with hard limit, 50/minute. Local enforcement is deliberately lower: 450 requests over a conservative rolling 31-day window (whole-day buckets), also calendar-month capped, and 45 per rolling minute. Each upstream request is reserved; maximum 15 per itinerary query, shared six-second timeout, no retries. A matched rail leg can require five requests (one identity lookup plus two directions at both stations); this is not one request per journey. GPS updates make no NAVITIME calls. Other apps' usage is outside our ledger. No paid endpoint, automatic subscription, or upgrade is implemented. Free Transport does not include the platform/timetable API. See [setup](NAVITIME_SETUP.md).
+
 Pricing checked 2026-10-20 against [Google's global table](https://developers.google.com/maps/billing-and-pricing/pricing). `npm run cost:estimate` gives the plan's 100-trip scenario (30,000 tiles, 160 basic routes, 20 Details, 20 Geocoding, 10 Text Search); estimated Google charge $0 **only with no other account usage**. This is a scenario, not a bill or a promise of free use.
 
 `scripts/costs.ts` applies all volume tiers and subtracts existing account usage. Static Maps regression: 0/6,000/18,000/36,000/180,000 requests → $0/$0/$16/$52/$308. Static Maps, Autocomplete and Dynamic Maps are not enabled. Tile 30k/150k/300k scenarios → $0/$30/$120.
