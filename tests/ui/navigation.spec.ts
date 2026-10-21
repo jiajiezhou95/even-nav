@@ -2343,32 +2343,50 @@ for (const transfers of [0, 1, 2])
       // Phone state can advance before the asynchronous native image submission.
       // Every variant must wait for the actual display before sending menu gestures.
       await page.evaluate(() => (window as any).waitForTransitFrame());
-      const menuBackground = await page.evaluate(
-        () => (window as any).hudImages[2],
-      );
       await page.evaluate(() => (window as any).emitGesture(3, 20));
-      await page.evaluate(
-        async ({ background, action }) => {
-          const path = "/src/hud-menu.ts";
-          const { renderHudMenuTile, HUD_MENU_ITEMS } = await import(path);
-          const guidancePath = "/src/guidance.ts";
-          const { transitActionLabels } = await import(guidancePath);
-          const bytes = await renderHudMenuTile(0, new Uint8Array(background), [
-            { label: transitActionLabels[action], action },
-            ...HUD_MENU_ITEMS,
-          ]);
-          for (let i = 0; i < 100; i++) {
-            if (
-              JSON.stringify(Array.from(bytes)) ===
-              JSON.stringify((window as any).hudImages[2])
-            )
+      await page.evaluate(async (action) => {
+        const path = "/src/hud-menu.ts";
+        const { renderHudMenuTile, HUD_MENU_ITEMS } = await import(path);
+        const guidancePath = "/src/guidance.ts";
+        const { transitActionLabels } = await import(guidancePath);
+        const promptId = (window as any).navSession.snapshot.transitPrompt?.id;
+        const bytes = await renderHudMenuTile(0, undefined, [
+          { label: transitActionLabels[action], action },
+          ...(promptId ? [{ label: "暂不确认", action: "DEFER_TRANSIT" }] : []),
+          ...HUD_MENU_ITEMS,
+        ]);
+        // Only the opaque menu rectangle is stable: the map under the left
+        // 108px may update during emitGesture's debounce wait or composition.
+        const menuPixels = async (png: Uint8Array) => {
+          const bitmap = await createImageBitmap(
+            new Blob([new Uint8Array(png)], { type: "image/png" }),
+          );
+          const canvas = document.createElement("canvas");
+          canvas.width = 180;
+          canvas.height = 144;
+          const ctx = canvas.getContext("2d")!;
+          ctx.drawImage(bitmap, 108, 0, 180, 144, 0, 0, 180, 144);
+          bitmap.close();
+          return ctx.getImageData(0, 0, 180, 144).data;
+        };
+        const expected = await menuPixels(bytes);
+        for (let i = 0; i < 100; i++) {
+          if (
+            (window as any).navSession.snapshot.transitPrompt?.id !== promptId
+          )
+            throw new Error(
+              "Transit confirmation context changed while waiting for menu",
+            );
+          const actualBytes = (window as any).hudImages[2];
+          if (actualBytes) {
+            const actual = await menuPixels(new Uint8Array(actualBytes));
+            if (expected.every((value, index) => value === actual[index]))
               return;
-            await new Promise((resolve) => setTimeout(resolve, 20));
           }
-          throw new Error("Transit menu did not reach h1");
-        },
-        { background: menuBackground, action },
-      );
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        throw new Error("Transit menu did not reach h1");
+      }, action);
       if (transfers === 2 && action === "BOARDED" && before.leg === 1) {
         await saveNative(".local/evidence/hud-transit-board-menu-native.png");
       }
