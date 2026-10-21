@@ -59,6 +59,313 @@ function gateway(url: URL) {
   };
 }
 describe("NAVITIME optional free Transport enrichment", () => {
+  it.each([
+    ["市ケ谷", "市ヶ谷"],
+    ["菊川(東京都)", "菊川"],
+    ["神田(東京都)", "神田"],
+  ])(
+    "matches exact reviewed station alias %s",
+    async (providerName, routeName) => {
+      const input = routes();
+      input[0]!.legs[0]!.fromStop!.name = routeName;
+      const result = await enrichNavitime(
+        input,
+        "synthetic",
+        async () => {},
+        async (raw) => {
+          const url = new URL(String(raw));
+          if (url.pathname === "/transport_link") {
+            const data = search();
+            data.items[0]!.nodes[0]!.name = providerName;
+            return Response.json(data);
+          }
+          const data = gateway(url);
+          data.node = {
+            ...data.node,
+            name: data.node.id === "a" ? providerName : b.name,
+          };
+          return Response.json(data);
+        },
+      );
+      expect(result[0]!.navitime?.exits).toBe("AVAILABLE");
+    },
+  );
+  it.each(["東京都交通局", "Other Operator"])(
+    "scopes Shinjuku line alias to the reviewed operator: %s",
+    async (agency) => {
+      const input = routes(),
+        ride = input[0]!.legs[0]!;
+      ride.line = "新宿線";
+      ride.agency = agency;
+      const fetcher = vi.fn(async (raw: string | URL | Request) => {
+        const url = new URL(String(raw));
+        if (url.pathname === "/transport_link") {
+          expect(url.searchParams.get("word")).toBe(
+            agency === "東京都交通局" ? "都営新宿線" : "新宿線",
+          );
+          const data = search();
+          data.items[0]!.name = "都営新宿線";
+          data.items[0]!.company.name = "東京都交通局";
+          return Response.json(data);
+        }
+        return Response.json(gateway(url));
+      });
+      const result = await enrichNavitime(
+        input,
+        "synthetic",
+        async () => {},
+        fetcher,
+      );
+      expect(result[0]!.navitime?.exits).toBe(
+        agency === "東京都交通局" ? "AVAILABLE" : "NO_MATCH",
+      );
+    },
+  );
+  it.each(["intermediate", "headsign", "ambiguous", "unrelated headsign"])(
+    "discriminates shared lines using independent full-line evidence: %s",
+    async (kind) => {
+      const input = routes(),
+        ride = input[0]!.legs[0]!;
+      ride.line = "12345678";
+      const mid = {
+        id: "m",
+        name: "Middle",
+        coord: { lat: 35.005, lon: 139.005 },
+      };
+      ride.intermediateStops = [
+        {
+          name: mid.name,
+          coordinate: { lat: mid.coord.lat, lng: mid.coord.lon },
+        },
+      ];
+      if (kind === "headsign") ride.headsign = "Terminal";
+      if (kind === "unrelated headsign") ride.headsign = "Elsewhere";
+      const fetcher = vi.fn(async (raw: string | URL | Request) => {
+        const url = new URL(String(raw));
+        if (url.pathname === "/transport_node") {
+          const n = url.searchParams.get("word") === a.name ? a : b;
+          return Response.json({
+            count: { total: 1, offset: 0 },
+            unit: search().unit,
+            items: [
+              {
+                ...n,
+                details: [0, 1].map((i) => ({
+                  company: line.company,
+                  link: { id: `line${i}`, name: `Line ${i}` },
+                })),
+              },
+            ],
+          });
+        }
+        if (url.pathname === "/transport_link") {
+          const i = url.searchParams.get("word") === "Line 0" ? 0 : 1;
+          const nodes =
+            kind === "intermediate" && i === 1 ? [a, b] : [a, mid, b];
+          if (i === 0)
+            nodes.push({
+              id: "terminal",
+              name: "Terminal",
+              coord: { lat: 35.02, lon: 139.02 },
+            });
+          return Response.json({
+            count: { total: 1, offset: 0 },
+            unit: search().unit,
+            items: [{ ...line, id: `line${i}`, name: `Line ${i}`, nodes }],
+          });
+        }
+        const data = gateway(url);
+        data.link.id = url.searchParams.get("link")!;
+        return Response.json(data);
+      });
+      const result = await enrichNavitime(
+        input,
+        "synthetic",
+        async () => {},
+        fetcher,
+      );
+      const accepted = kind === "intermediate" || kind === "headsign";
+      expect(result[0]!.legs[0]!.line).toBe(accepted ? "Line 0" : "12345678");
+      expect(result[0]!.navitime?.exits).toBe(
+        accepted ? "AVAILABLE" : "NO_MATCH",
+      );
+      expect(fetcher).toHaveBeenCalledTimes(accepted ? 8 : 4);
+    },
+  );
+  it.each(["東京都", "福井県"])(
+    "only accepts the reviewed Tawaramachi locality alias: %s",
+    async (locality) => {
+      const input = routes();
+      input[0]!.legs[0]!.fromStop!.name = "田原町 Tawaramachi";
+      const fetcher = vi.fn(async (raw: string | URL | Request) => {
+        const url = new URL(String(raw));
+        if (url.pathname === "/transport_link") {
+          const data = search();
+          data.items[0]!.nodes[0]!.name = `田原町(${locality})`;
+          return Response.json(data);
+        }
+        const data = gateway(url);
+        data.node = {
+          ...data.node,
+          name: data.node.id === "a" ? `田原町(${locality})` : b.name,
+        };
+        return Response.json(data);
+      });
+      const result = await enrichNavitime(
+        input,
+        "synthetic",
+        async () => {},
+        fetcher,
+      );
+      expect(result[0]!.navitime?.exits).toBe(
+        locality === "東京都" ? "AVAILABLE" : "NO_MATCH",
+      );
+      expect(fetcher).toHaveBeenCalledTimes(locality === "東京都" ? 5 : 1);
+    },
+  );
+  it.each(["reviewed", "wrong alias", "beyond 500m", "duplicate identity"])(
+    "uses exact reviewed operator/station aliases with bounded coordinates: %s",
+    async (kind) => {
+      const input = routes(),
+        ride = input[0]!.legs[0]!;
+      ride.agency = "都営地下鉄";
+      ride.fromStop!.name = "とうきょうスカイツリー";
+      // Synthetic representative-point difference: about333m, not private coordinates.
+      ride.fromStop!.coordinate = {
+        lat: kind === "beyond 500m" ? 35.006 : 35.003,
+        lng: 139,
+      };
+      const fetcher = vi.fn(async (raw: string | URL | Request) => {
+        const url = new URL(String(raw));
+        if (url.pathname === "/transport_link") {
+          const data = search();
+          data.items[0]!.company.name = "東京都交通局";
+          data.items[0]!.nodes[0]!.name =
+            kind === "wrong alias"
+              ? "とうきょうスカイツリー[別駅]"
+              : "とうきょうスカイツリー[業平橋]";
+          if (kind === "duplicate identity")
+            data.items[0]!.nodes.push({
+              ...data.items[0]!.nodes[0]!,
+              id: "duplicate",
+            });
+          return Response.json(data);
+        }
+        const data = gateway(url);
+        data.node = {
+          ...data.node,
+          name:
+            data.node.id === "a" ? "とうきょうスカイツリー[業平橋]" : b.name,
+        };
+        return Response.json(data);
+      });
+      const result = await enrichNavitime(
+        input,
+        "synthetic",
+        async () => {},
+        fetcher,
+      );
+      expect(result[0]!.navitime?.exits).toBe(
+        kind === "reviewed" ? "AVAILABLE" : "NO_MATCH",
+      );
+      expect(fetcher).toHaveBeenCalledTimes(kind === "reviewed" ? 5 : 1);
+    },
+  );
+  it.each([
+    "ordered",
+    "reverse direction",
+    "misordered",
+    "ambiguous",
+    "wrong stop",
+    "missing coord",
+    "no intermediates",
+    "adjacent no intermediates",
+    "reverse adjacent no intermediates",
+  ])(
+    "verifies through-service physical line independently of train operator: %s",
+    async (kind) => {
+      const input = routes(),
+        ride = input[0]!.legs[0]!;
+      ride.line = "87654321";
+      ride.agency = "Through Train Operator";
+      const mid1 = {
+        id: "m1",
+        name: "Middle One",
+        coord: { lat: 35.003, lon: 139.003 },
+      };
+      const mid2 = {
+        id: "m2",
+        name: "Middle Two",
+        coord: { lat: 35.007, lon: 139.007 },
+      };
+      ride.intermediateStops = [mid1, mid2].map((n) => ({
+        name: n.name,
+        coordinate: { lat: n.coord.lat, lng: n.coord.lon },
+      }));
+      if (kind === "misordered") ride.intermediateStops.reverse();
+      if (kind === "wrong stop") ride.intermediateStops[0]!.name = "Elsewhere";
+      if (kind === "missing coord")
+        delete ride.intermediateStops[0]!.coordinate;
+      if (kind.includes("no intermediates")) ride.intermediateStops = [];
+      const fetcher = vi.fn(async (raw: string | URL | Request) => {
+        const url = new URL(String(raw));
+        if (url.pathname === "/transport_node") {
+          const station = url.searchParams.get("word") === a.name ? a : b;
+          const details = [
+            { company: line.company, link: { id: line.id, name: line.name } },
+          ];
+          if (kind === "ambiguous")
+            details.push({
+              company: line.company,
+              link: { id: "parallel", name: "Parallel" },
+            });
+          return Response.json({
+            count: { total: 1, offset: 0 },
+            unit: search().unit,
+            items: [{ ...station, details }],
+          });
+        }
+        if (url.pathname === "/transport_link") {
+          const data = search();
+          data.items[0]!.nodes = [a, mid1, mid2, b];
+          if (kind.includes("adjacent no intermediates"))
+            data.items[0]!.nodes = [a, b];
+          if (kind === "reverse direction") data.items[0]!.nodes.reverse();
+          if (kind === "reverse adjacent no intermediates")
+            data.items[0]!.nodes.reverse();
+          return Response.json(data);
+        }
+        return Response.json(gateway(url));
+      });
+      const result = await enrichNavitime(
+        input,
+        "synthetic",
+        async () => {},
+        fetcher,
+      );
+      const output = result[0]!.legs[0]!;
+      expect(output.agency).toBe(ride.agency);
+      if (
+        [
+          "ordered",
+          "reverse direction",
+          "adjacent no intermediates",
+          "reverse adjacent no intermediates",
+        ].includes(kind)
+      ) {
+        expect(output.line).toBe(line.name);
+        expect(output.lineOriginal).toBe("87654321");
+        expect(result[0]!.navitime?.exits).toBe("AVAILABLE");
+        expect(fetcher).toHaveBeenCalledTimes(7);
+      } else {
+        expect(output.line).toBe("87654321");
+        expect(output.fromStop?.stationAccess).toBeUndefined();
+        expect(fetcher.mock.calls.length).toBeLessThanOrEqual(
+          kind === "ambiguous" ? 4 : 3,
+        );
+      }
+    },
+  );
   it("selects access independently for alternative walking approaches without extra provider calls", async () => {
     const input = routes();
     const walk = (lng: number) => ({
@@ -197,6 +504,18 @@ describe("NAVITIME optional free Transport enrichment", () => {
             ],
           });
         }
+        if (
+          (kind === "operator" || kind === "ambiguous") &&
+          url.pathname === "/transport_link"
+        ) {
+          const data = search();
+          data.items[0]!.nodes.splice(1, 0, {
+            id: "mid",
+            name: "Unreported intermediate",
+            coord: { lat: 35.005, lon: 139.005 },
+          });
+          return Response.json(data);
+        }
         expect(url.pathname).toBe("/transport_node/gateway");
         const data = gateway(url);
         if (kind === "empty exits") {
@@ -215,7 +534,9 @@ describe("NAVITIME optional free Transport enrichment", () => {
         expect(result[0]!.attribution).toContain("NAVITIME JAPAN");
         expect(!!ride.fromStop?.stationAccess).toBe(kind === "success");
       } else {
-        expect(fetcher.mock.calls.length).toBeLessThanOrEqual(2);
+        expect(fetcher.mock.calls.length).toBeLessThanOrEqual(
+          kind === "operator" ? 3 : kind === "ambiguous" ? 4 : 2,
+        );
         expect(ride.line).toBe("12345678");
         expect(ride.lineNameSource).toBeUndefined();
         expect(ride.fromStop?.stationAccess).toBeUndefined();
@@ -264,7 +585,7 @@ describe("NAVITIME optional free Transport enrichment", () => {
       expect(result[0]!.navitime?.exits).toBe("NO_MATCH");
     },
   );
-  it("caps the whole response at 15 upstream requests even across many rides", async () => {
+  it("caps the whole response at 20 upstream requests even across many rides", async () => {
     const input = routes();
     input[0]!.legs = Array.from({ length: 6 }, (_, i) => ({
       ...structuredClone(input[0]!.legs[0]!),
@@ -284,9 +605,56 @@ describe("NAVITIME optional free Transport enrichment", () => {
     });
     const reserve = vi.fn(async () => {});
     const result = await enrichNavitime(input, "synthetic", reserve, fetcher);
-    expect(fetcher).toHaveBeenCalledTimes(15);
-    expect(reserve).toHaveBeenCalledTimes(15);
+    expect(fetcher).toHaveBeenCalledTimes(20);
+    expect(reserve).toHaveBeenCalledTimes(20);
     expect(result[0]!.navitime?.exits).toBe("PARTIAL");
+  });
+  it("completes all six endpoints of a three-ride itinerary needing 16 calls", async () => {
+    const input = routes();
+    input[0]!.legs = Array.from({ length: 3 }, (_, i) => ({
+      ...structuredClone(input[0]!.legs[0]!),
+      line: i === 2 ? "12345678" : `Line ${i}`,
+    }));
+    const fetcher = vi.fn(async (raw: string | URL | Request) => {
+      const url = new URL(String(raw));
+      if (url.pathname === "/transport_link") {
+        const result = search();
+        result.items[0]!.name = url.searchParams.get("word")!;
+        result.items[0]!.id = result.items[0]!.name.replace(" ", "_");
+        return Response.json(result);
+      }
+      if (url.pathname === "/transport_node") {
+        const station = url.searchParams.get("word") === a.name ? a : b;
+        return Response.json({
+          count: { total: 1, offset: 0 },
+          unit: search().unit,
+          items: [
+            {
+              ...station,
+              details: [
+                {
+                  company: line.company,
+                  link: { id: "Line_2", name: "Line 2" },
+                },
+              ],
+            },
+          ],
+        });
+      }
+      const result = gateway(url);
+      result.link.id = url.searchParams.get("link")!;
+      return Response.json(result);
+    });
+    const reserve = vi.fn(async () => {});
+    const result = await enrichNavitime(input, "synthetic", reserve, fetcher);
+    expect(fetcher).toHaveBeenCalledTimes(16);
+    expect(reserve).toHaveBeenCalledTimes(16);
+    expect(result[0]!.navitime?.exits).toBe("AVAILABLE");
+    expect(
+      result[0]!.legs.every(
+        (l) => l.fromStop?.stationAccess && l.toStop?.stationAccess,
+      ),
+    ).toBe(true);
   });
   it.each(["truncated", "units"])(
     "rejects %s gateway metadata",

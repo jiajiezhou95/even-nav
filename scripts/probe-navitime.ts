@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import type { Route } from "../packages/contracts/src/index";
 
 console.log(
-  "Plan: check deployed NAVITIME capability; if configured, 1 public Omotesando–Shibuya Transitous route query with at most 15 NAVITIME Transport requests; 0 Google requests; no retries.",
+  "Plan: check deployed NAVITIME capability; if configured, 1 public Omotesando–Shibuya Transitous route query with at most 20 NAVITIME Transport requests; 0 Google requests; no retries.",
 );
 if (!process.argv.includes("--execute")) process.exit(0);
 const config = JSON.parse(readFileSync(".local/config.json", "utf8"));
@@ -62,8 +62,11 @@ try {
     const statuses =
       data.routes?.map((route) => ({
         exits: route.navitime?.exits,
-        ridesWithNumericNames: route.legs.filter(
-          (leg) => leg.mode === "RIDE" && /^\d+$/.test(leg.line || ""),
+        rideCount: route.legs.filter((leg) => leg.mode === "RIDE").length,
+        ridesWithUnresolvedNames: route.legs.filter(
+          (leg) =>
+            leg.mode === "RIDE" &&
+            (!leg.line?.trim() || /^\d+$/.test(leg.line.trim())),
         ).length,
         realtimeRides: route.legs.filter(
           (leg) => leg.mode === "RIDE" && leg.realtime,
@@ -76,7 +79,15 @@ try {
           .flatMap((leg) => [leg.fromStop, leg.toStop])
           .filter((stop) => stop?.stationAccess?.selectedGateway).length,
       })) ?? [];
-    const found = statuses.some((status) => status.stopsWithExits > 0);
+    // A successful alternative cannot establish that the user's selected ride works.
+    const found =
+      statuses.length > 0 &&
+      statuses.every(
+        (status) =>
+          status.rideCount > 0 &&
+          status.ridesWithUnresolvedNames === 0 &&
+          status.stopsWithExits === status.rideCount * 2,
+      );
     console.log(
       JSON.stringify({
         evidence: "LIVE_DEPLOYED_WORKER",

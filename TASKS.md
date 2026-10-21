@@ -42,3 +42,7 @@ Subscription/key setup complete. Real public route enrichment verified after bil
 ## Transit usability follow-up — 2026-10-21
 
 Scope: compact left attribution, real departure countdown and conservative missed-service refresh, nearest matched station gateway selection. Provider selection and UI/countdown are isolated parallel lanes; root integrates/tests/packages private Beta0.1.23. No new providers or paid upgrades. Exit selector deployed and public-route LIVE verified (two alternatives, two selected stops each); G2 and actual missed-train observations remain external gates.
+
+## Ten-address metadata acceptance (2026-10-21)
+
+Fixed 10 public addresses: provider-backed line/access acceptance 10/10, phone/G2 browser replay 10/10 PASS. Six initial failures retained and repaired without changing addresses. Backend deployed for private Beta 0.1.24. See docs/TRANSIT_TEN_ADDRESS_ACCEPTANCE.md for live/reused/replay/hardware boundaries. No public release or merge.

@@ -461,6 +461,7 @@ export async function transitRoutes(
     directModes: "",
     preTransitModes: "WALK",
     postTransitModes: "WALK",
+    maxPostTransitTime: "1800",
     detailedLegs: "true",
     detailedTransfers: "true",
     useRoutedTransfers: "true",

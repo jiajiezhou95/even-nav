@@ -65,11 +65,21 @@ function select(
       gateway,
       distance: meters(anchor, gateway.coordinate),
     }))
-    .sort((a, b) => a.distance - b.distance);
+    .sort(
+      (a, b) =>
+        a.distance - b.distance ||
+        (a.gateway.name < b.gateway.name
+          ? -1
+          : a.gateway.name > b.gateway.name
+            ? 1
+            : 0) ||
+        a.gateway.coordinate.lat - b.gateway.coordinate.lat ||
+        a.gateway.coordinate.lng - b.gateway.coordinate.lng,
+    );
   const nearest = ranked[0];
-  // Sub-metre ties do not justify inventing one preferred entrance.
-  if (!nearest || (ranked[1] && ranked[1].distance - nearest.distance <= 1))
-    return;
+  // Station identity is already verified. Equal distances use a stable display
+  // choice; sub-metre differences still select the geometrically nearer exit.
+  if (!nearest) return;
   access.selection = "NEAREST_STRAIGHT_LINE";
   access.selectedGateway = {
     ...structuredClone(nearest.gateway),

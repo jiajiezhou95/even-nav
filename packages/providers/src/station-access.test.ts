@@ -46,6 +46,42 @@ function route(legs: RouteLeg[]): Route {
   };
 }
 describe("station access geometric selection", () => {
+  it("breaks exact same-location ties by name independently of candidate order", () => {
+    const value = route([leg("WALK", 138.99, 139), leg("RIDE")]);
+    const station = value.legs[1]!.fromStop!.stationAccess!;
+    station.gateways = [
+      { name: "B", coordinate: point(139), directions: ["up"] },
+      { name: "A", coordinate: point(139), directions: ["up"] },
+    ];
+    selectStationAccessForRoute(value);
+    expect(station.selectedGateway?.name).toBe("A");
+    station.gateways.reverse();
+    selectStationAccessForRoute(value);
+    expect(station.selectedGateway?.name).toBe("A");
+  });
+  it("uses coordinates as a stable fallback for equal distance and name", () => {
+    const value = route([leg("WALK"), leg("RIDE")]);
+    const station = value.legs[1]!.fromStop!.stationAccess!;
+    station.gateways = [
+      { name: "A", coordinate: point(139.001), directions: ["up"] },
+      { name: "A", coordinate: point(138.999), directions: ["up"] },
+    ];
+    selectStationAccessForRoute(value);
+    expect(station.selectedGateway?.coordinate.lng).toBe(138.999);
+    station.gateways.reverse();
+    selectStationAccessForRoute(value);
+    expect(station.selectedGateway?.coordinate.lng).toBe(138.999);
+  });
+  it("selects the nearer gateway even with less than one metre difference", () => {
+    const value = route([leg("WALK", 138.99, 139), leg("RIDE")]);
+    const station = value.legs[1]!.fromStop!.stationAccess!;
+    station.gateways = [
+      { name: "A farther", coordinate: point(139.000001), directions: ["up"] },
+      { name: "Z nearer", coordinate: point(139), directions: ["up"] },
+    ];
+    selectStationAccessForRoute(value);
+    expect(station.selectedGateway?.name).toBe("Z nearer");
+  });
   it("selects boarding near walking origin and alighting near walking destination, preserving candidates and route", () => {
     const value = route([
       leg("WALK", 138.99, 139),
@@ -111,7 +147,6 @@ describe("station access geometric selection", () => {
     "no candidates",
     "invalid candidates",
     "distant candidates",
-    "tie",
     "stay seated",
   ])("leaves %s unselected and clears stale metadata", (kind) => {
     const value = route([leg("WALK", 138.99, 139), leg("RIDE")]);
@@ -128,7 +163,6 @@ describe("station access geometric selection", () => {
       station.gateways.forEach((g) => (g.coordinate = point(Infinity)));
     if (kind === "distant candidates")
       station.gateways.forEach((g) => (g.coordinate = point(140)));
-    if (kind === "tie") walk.geometry[0] = point(139);
     if (kind === "stay seated") ride.staySeated = true;
     selectStationAccessForRoute(value);
     expect(station.selection).toBe("UNSELECTED_CANDIDATES");

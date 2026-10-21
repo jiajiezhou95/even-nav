@@ -300,9 +300,10 @@ describe("providers", () => {
     expect(r[0].legs.some((l) => l.mode === "WAIT")).toBe(true);
     expect(r[0].legs.at(-1)?.mode).toBe("WALK");
     expect(r[0].legs[0].steps[0].instruction).toBe("继续直行 · Synthetic");
-    expect(new URL(String(vi.mocked(f).mock.calls[0][0])).pathname).toBe(
-      "/api/v6/plan",
-    );
+    const requested = new URL(String(vi.mocked(f).mock.calls[0][0]));
+    expect(requested.pathname).toBe("/api/v6/plan");
+    expect(requested.searchParams.get("maxPostTransitTime")).toBe("1800");
+    expect(requested.searchParams.get("postTransitModes")).toBe("WALK");
   });
   it.each([
     ["LEFT", "向左转"],

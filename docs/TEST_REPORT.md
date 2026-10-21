@@ -1,5 +1,9 @@
 # Verification checkpoint — 2026-10-20
 
+## Ten-address metadata repair (2026-10-21)
+
+10/10 fixed public addresses have named lines and selected gateways for every ride in the first canonical itinerary; 10/10 phone/G2 browser replays and 43 overview pages PASS. Initial 4/10 failures retained and repaired. 481 unit tests and TypeScript PASS. Worker 45055675-62c6-48f2-9e07-21be96bc067e deployed; two fresh Worker queries PASS. Existing Beta 0.1.24 uses the backend repair. See [evidence and limitations](TRANSIT_TEN_ADDRESS_ACCEPTANCE.md). Hardware and exact-head CI are separate gates.
+
 ## Beta 0.1.24 — opaque line identity and next-train banner
 
 - Fixed numeric/missing line enrichment using both stations' NAVITIME details, operator and unique shared line identity. No numeric-ID mapping is guessed. Original label/provenance retained. Missing/ambiguous identity remains unmatched.
