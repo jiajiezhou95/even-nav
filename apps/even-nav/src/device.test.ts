@@ -16,7 +16,14 @@ import {
   type EvenHubEvent,
   type EvenAppBridge,
 } from "@evenrealities/even_hub_sdk";
-import { renderHud, renderCompatibilityMap } from "./hud-renderer";
+import {
+  renderHud,
+  renderCompatibilityMap,
+  HUD_WIDTH,
+  HUD_HEIGHT,
+  HUD_MAP_WIDTH,
+  HUD_MAP_HEIGHT,
+} from "./hud-renderer";
 
 vi.mock("./runtime", () => ({
   isEvenHost: () => true,
@@ -60,7 +67,8 @@ describe("official SDK boundary and display queue", () => {
       rebuildPageContainer: vi.fn(async (_page: RebuildPageContainer) => true),
       textContainerUpgrade: vi.fn(),
       updateImageRawData: vi.fn(
-        async (_value: { containerID: number }) => "success",
+        async (_value: { containerID: number; containerName: string }) =>
+          "success",
       ),
     };
     const device = new EvenDevice(
@@ -90,6 +98,48 @@ describe("official SDK boundary and display queue", () => {
     expect(
       b.imageObject.map((v: { containerID: number }) => v.containerID),
     ).toEqual([1, 2, 3, 4]);
+    expect(b.imageObject).toEqual([
+      {
+        containerID: 1,
+        containerName: "h0",
+        xPosition: 0,
+        yPosition: 0,
+        width: 288,
+        height: 144,
+      },
+      {
+        containerID: 2,
+        containerName: "h1",
+        xPosition: 288,
+        yPosition: 0,
+        width: 288,
+        height: 144,
+      },
+      {
+        containerID: 3,
+        containerName: "h2",
+        xPosition: 0,
+        yPosition: 144,
+        width: 288,
+        height: 144,
+      },
+      {
+        containerID: 4,
+        containerName: "h3",
+        xPosition: 288,
+        yPosition: 144,
+        width: 288,
+        height: 144,
+      },
+    ]);
+    for (const container of [...b.imageObject, ...b.textObject]) {
+      expect(
+        new TextEncoder().encode(container.containerName).length,
+      ).toBeLessThanOrEqual(14);
+    }
+    expect([HUD_WIDTH, HUD_HEIGHT, HUD_MAP_WIDTH, HUD_MAP_HEIGHT]).toEqual([
+      576, 288, 576, 192,
+    ]);
     expect(b.textObject).toEqual([
       {
         containerID: 5,
@@ -105,6 +155,17 @@ describe("official SDK boundary and display queue", () => {
     expect(
       bridge.updateImageRawData.mock.calls.map(([v]) => v.containerID),
     ).toEqual([1, 2, 3, 4]);
+    expect(
+      bridge.updateImageRawData.mock.calls.map(([v]) => [
+        v.containerID,
+        v.containerName,
+      ]),
+    ).toEqual(
+      b.imageObject.map((v: { containerID: number; containerName: string }) => [
+        v.containerID,
+        v.containerName,
+      ]),
+    );
     expect(bridge.textContainerUpgrade).not.toHaveBeenCalled();
     device.queue.push({ ...frame, sequence: 2 });
     await vi.waitFor(() => expect(device.lastSubmission?.sequence).toBe(2));

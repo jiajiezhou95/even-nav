@@ -203,3 +203,12 @@ User also authorized a bounded G2 XYZ capture. Manual diagnostics use the public
 - Compatibility map no longer shrinks the entire 576x192 source into a letterboxed288x96 area. Aspect-preserving cover crops the source center384x192 into288x144, making roads1.5x the prior letterboxed size and filling the old map container. The camera middle-half position range remains inside with margin; geographic coverage narrows horizontally and temple zoom remains available. Full attribution remains in native text.
 - No provider request construction, Worker, phone layout, route guidance or pairing changes. B optical rendering remains a separate pending hardware criterion.
 - 28 targeted device tests and TypeScript PASS. Actual browser adapter verifies cover crop, no black bars, uniform scaling, centered marker and36px position margins. Build/privacy119files PASS. Private Beta build117126,82273bytes; download SHA256 `cc427db7ff67216ef32c17f72237bd4d798b0606e10181feb0bd939a81d28313` matches. New B-switch optical acceptance remains pending.
+
+
+### Beta 0.1.15 — short native container names for full B layout
+
+- User 0.1.14 still shows compatibility layout; optical photograph confirms small left map, right guidance and bottom attribution. Full B is not accepted.
+- Concrete protocol discrepancy: OpenEvenSdk PROTOCOL.md section9 records firmware rejecting names over14bytes; even-g2-go validates the same14byte limit. Current B bottom names are15/16ASCIIbytes, whereas successful baseline names are11bytes or fewer. OfficialSDK documentation's16-character allowance is insufficient for this measured firmware boundary.
+- Only shorten shared B image container names; page creation/rebuild and image updates use the same names. Preserve IDs, four288x144quadrants,576x192 map, top cues/icons, attribution, event capture, menu and proven startup/fallback sequence. No hybrid or smaller-map substitute for B acceptance.
+- References: https://github.com/Thepizzapie/OpenEvenSdk/blob/main/PROTOCOL.md ; https://github.com/Wang-Yu-Che/even-g2-go/blob/main/protocol/evenhub_native.go . Hardware B acceptance remains pending; no provider calls or Worker changes.
+- 28 targeted device tests and TypeScript PASS; build/privacy119files PASS. Private Beta build117131,78986bytes; download SHA256 `b980daabc9137b02c1110b7bfc22085b89a3f63f91bff65ca38fe80f7710d50a` matches. Complete B optical acceptance and final CI remain pending; local/mock PASS is not hardware PASS.

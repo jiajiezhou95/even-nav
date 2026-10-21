@@ -6,10 +6,10 @@ export const HUD_HEIGHT = 288;
 export const HUD_MAP_WIDTH = 576;
 export const HUD_MAP_HEIGHT = 192;
 export const HUD_QUADRANTS = [
-  { id: 1, name: "hud-top-left", x: 0, y: 0 },
-  { id: 2, name: "hud-top-right", x: 288, y: 0 },
-  { id: 3, name: "hud-bottom-left", x: 0, y: 144 },
-  { id: 4, name: "hud-bottom-right", x: 288, y: 144 },
+  { id: 1, name: "h0", x: 0, y: 0 },
+  { id: 2, name: "h1", x: 288, y: 0 },
+  { id: 3, name: "h2", x: 0, y: 144 },
+  { id: 4, name: "h3", x: 288, y: 144 },
 ] as const;
 
 export interface HudContent {
