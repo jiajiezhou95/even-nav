@@ -198,21 +198,22 @@ export async function drawHudCanvas(
   const copyright = hasGoogleBrand
     ? frame.attribution.replace(/^Google Maps(?:\s*·\s*|\n|$)/, "")
     : frame.attribution;
-  ctx.font = '13px "Microsoft YaHei", "PingFang SC", sans-serif';
-  const copyrightX = hasGoogleBrand ? 116 : 8;
+  ctx.font = '12px "Microsoft YaHei", "PingFang SC", sans-serif';
+  const copyrightX = 2;
   const copyrightLines = wrapHudText(
-    copyright,
-    328 - copyrightX,
+    `${hasGoogleBrand ? "Google Maps\n" : ""}${copyright}`,
+    196,
     (v) => ctx.measureText(v).width,
   );
+  ctx.font = '13px "Microsoft YaHei", "PingFang SC", sans-serif';
   const statusLines = wrapHudText(
     frame.status,
-    236,
+    366,
     (v) => ctx.measureText(v).width,
   );
   const footerHeight = Math.max(
     32,
-    Math.max(copyrightLines.length, statusLines.length) * 15 + 2,
+    Math.max(copyrightLines.length * 13, statusLines.length * 15) + 2,
   );
   // Expand over the lower map for long copyright rather than shrink or truncate it.
   // Pathologically long content hides the map entirely, never uncredited map output.
@@ -228,12 +229,10 @@ export async function drawHudCanvas(
   ctx.fillStyle = "#000";
   ctx.fillRect(0, footerY, HUD_WIDTH, footerHeight);
   ctx.fillStyle = "#fff";
-  drawLines(copyrightLines, copyrightX, footerY + 2, 15);
-  drawLines(statusLines, 334, footerY + 2, 15);
-  if (hasGoogleBrand) {
-    ctx.font = "16px Arial, sans-serif";
-    ctx.fillText("Google Maps", 8, footerY + (footerHeight - 18) / 2);
-  }
+  ctx.font = '12px "Microsoft YaHei", "PingFang SC", sans-serif';
+  drawLines(copyrightLines, copyrightX, footerY + 2, 13);
+  ctx.font = '13px "Microsoft YaHei", "PingFang SC", sans-serif';
+  drawLines(statusLines, 208, footerY + 2, 15);
   return canvas;
 }
 

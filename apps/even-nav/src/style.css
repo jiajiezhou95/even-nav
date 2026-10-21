@@ -769,6 +769,13 @@ dialog > p {
 }
 .attribution {
   white-space: pre-line;
+  margin: 2px 0;
+  text-align: left;
+}
+.departure-status {
+  font-size: 18px;
+  font-weight: 650;
+  margin: 12px 0;
 }
 
 .location-dot {

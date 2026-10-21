@@ -38,3 +38,7 @@ Next DAG: restore browser control→Google API/key setup→bounded Google live+e
 ## NAVITIME activation checkpoint — 2026-10-21
 
 Subscription/key setup complete. Real public route enrichment verified after bilingual identity repair; partial coverage retained honestly. Private Beta0.1.22 uploaded and downloaded hash verified. Free NAVITIME station platforms remain unavailable; existing Transitous platforms preserved. Hardware observation pending. See TEST_REPORT.md.
+
+## Transit usability follow-up — 2026-10-21
+
+Scope: compact left attribution, real departure countdown and conservative missed-service refresh, nearest matched station gateway selection. Provider selection and UI/countdown are isolated parallel lanes; root integrates/tests/packages private Beta0.1.23. No new providers or paid upgrades. Exit selector deployed and public-route LIVE verified (two alternatives, two selected stops each); G2 and actual missed-train observations remain external gates.

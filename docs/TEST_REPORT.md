@@ -1,5 +1,14 @@
 # Verification checkpoint — 2026-10-20
 
+## Beta 0.1.23 — departure countdown and nearest station access
+
+- G2 attribution retained in full at 12px in a compact left column; 13px right column adds actual/plan-labelled departure countdown alongside remaining distance, current time and ETA. Local one-second ticking does not query providers. Long required attribution can still consume footer height.
+- Missed-service refresh requires three reliable outside-station fixes spanning four seconds, fresh <=5s accuracy <=25m, outside120m+accuracy, no boarding/pause or previously observed station arrival. One attempt per service,60s cooldown, single flight; stale responses and failures preserve navigation. Same remaining lines/stations auto-resume a real future itinerary; changed patterns require selection.
+- Gateway ranking uses matched NAVITIME coordinates against adjacent walking origin/destination, with local transfer anchors and no global-trip shortcut. Selected gateway is explicitly straight-line nearest, not a verified shortest/accessible walk; original path retained. Missing/ambiguous data remains unselected.
+- Full unit suite443/443 PASS; TypeScript PASS; full browser mock suite36/36 PASS, including successful rollover and pending/HTTP503 no-retry. Synthetic replay11frames ARRIVED,0provider calls. No actual missed-train, G2 optical or lockscreen acceptance claimed.
+- LIVE deployed Worker public itinerary probe PASS: two alternatives each exposed two selected station gateways; NAVITIME coverage AVAILABLE/PARTIAL retained. One Transitous query, at most15NAVITIME calls,0Google calls; no paid upgrade. Deployment db766bbf-d3dd-4061-85eb-95245969e694.
+- Build/package privacy scan139files PASS. Artifact92487bytes,SHA2569f883ea89a72accaaccd9dbe8b4b26f46e1edede1ed11e3c9b6c2febd09289fa. Beta build117284; channel/readback recorded by official CLI. Screenshot evidence in ignored .local/evidence/transit-departure-g2.png and transit-departure-phone.png.
+
 This is implementation/checkpoint evidence, not clean final live or hardware acceptance.
 
 | Evidence | Result | Actual scope |

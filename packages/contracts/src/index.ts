@@ -54,7 +54,15 @@ export interface StationAccess {
   fetchedAt: string;
   nodeId: string;
   lineId: string;
-  selection: "UNSELECTED_CANDIDATES";
+  selection: "UNSELECTED_CANDIDATES" | "NEAREST_STRAIGHT_LINE";
+  /** Geometric proximity only; not a verified accessible or shortest walking path. */
+  selectedGateway?: {
+    name: string;
+    coordinate: Coordinate;
+    directions: ("up" | "down")[];
+    distanceMeters: number;
+    reference: "WALK_ORIGIN" | "WALK_DESTINATION";
+  };
   gateways: {
     name: string;
     coordinate: Coordinate;

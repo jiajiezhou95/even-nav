@@ -5,6 +5,7 @@ import type {
 import type { Mode } from "../../../packages/contracts/src/index";
 import { staleInstruction } from "./freshness";
 import { geometryLength } from "../../../packages/core/src/geometry";
+import { departureText } from "./transit-departure";
 
 const actions: Record<string, string> = {
   TURN_LEFT: "向左转",
@@ -355,7 +356,11 @@ export function hudStatus(
     guidanceView(state, mode, now).stale || state.locationStale
       ? `${total}\n${arrival} ${Math.floor(now / 1000) % 2 ? "●" : " "} 更新定位中`
       : `${total}\n${arrival}`;
-  return state.transitPrompt
-    ? `${status}\n${state.transitPrompt.message} · 双击菜单`
+  const departure = mode === "TRANSIT" ? departureText(state, now) : "";
+  const withDeparture = departure
+    ? `${departure}\n${status.replace("\n", "  ")}`
     : status;
+  return state.transitPrompt
+    ? `${withDeparture}\n${state.transitPrompt.message} · 双击菜单`
+    : withDeparture;
 }

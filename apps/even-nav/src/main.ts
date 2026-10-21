@@ -43,6 +43,12 @@ import { maneuverSvg, maneuverPng } from "./maneuver-icons";
 import { movementBearingFromHistory } from "./direction";
 import { createImuProbe, type ImuProbePhase } from "./imu-probe";
 import packageInfo from "../../../package.json";
+import {
+  departureText,
+  MissedDepartureRefresh,
+  futureTransitRoutes,
+  sameRemainingRides,
+} from "./transit-departure";
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string) =>
   document.querySelector<T>(selector)!;
@@ -109,6 +115,9 @@ let mapBusy = false,
   previousMapVersion = -1;
 let zoomRedraw: ReturnType<typeof setTimeout> | undefined;
 let navigationViewKey = "";
+const departureRefresh = new MissedDepartureRefresh();
+let departureRefreshMessage = "";
+let departureMessageVersion = -1;
 let routeOverview = false;
 let directionHistory: DeviceFix[] = [];
 let pageSuspended = false,
@@ -288,6 +297,20 @@ function updateNavigationTelemetry(state = session.snapshot) {
   $("#nav-distance").textContent = distance(state.remainingMeters);
   $("#nav-fix").hidden = !view.stale;
   $("#nav-replan").hidden = !state.replanNeeded;
+  $("#nav-departure").textContent = transitDepartureStatus();
+  $("#nav-departure").hidden = !transitDepartureStatus();
+}
+function transitDepartureStatus() {
+  return mode === "TRANSIT"
+    ? [
+        departureText(session.snapshot),
+        departureMessageVersion === session.snapshot.version
+          ? departureRefreshMessage
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "";
 }
 function render() {
   const openedDetails = Array.from(
@@ -393,6 +416,7 @@ function render() {
     html += `<section class="panel navigation"><div class="section-label"><span>${state.phase === "ARRIVED" ? "到达附近" : state.paused ? "已暂停" : "03 / 导航中"}</span><span>${device.source === "BROWSER_DEV" ? "浏览器开发预览" : "Even 手机定位"}</span></div><div id="nav-instruction" role="heading" aria-level="2">${guidanceMarkup(state)}</div><div class="big-distance"><strong id="nav-distance">${distance(state.remainingMeters)}</strong><span>总剩余距离</span></div>
       <p id="nav-fix" class="gps-status warning" ${view.stale ? "" : "hidden"}><span class="location-dot" aria-hidden="true"></span>更新定位中</p>
       <p id="nav-replan" class="warning" ${state.replanNeeded ? "" : "hidden"}>检测到偏航、路线过期或错过发车，请重新规划。</p>
+      <p id="nav-departure" class="departure-status" ${transitDepartureStatus() ? "" : "hidden"}>${escape(transitDepartureStatus())}</p>
       <div class="nav-actions"><button id="pause" class="secondary">${state.paused ? "继续" : "暂停"}</button><button id="replan" class="secondary">重新规划</button><button id="end" class="secondary danger">结束</button></div>
       <p id="transit-phase-detail" ${transitPhaseDetail(state) ? "" : "hidden"}>${escape(transitPhaseDetail(state))}</p>
       ${state.transitPrompt ? `<div class="transit-prompt" role="status"><p>${escape(state.transitPrompt.message)}</p><div class="transit-actions"><button data-transit="${state.transitPrompt.action}" class="secondary">${transitActionLabels[state.transitPrompt.action]}</button><button data-transit="DEFER_TRANSIT" class="secondary">暂不确认</button></div></div>` : availableTransitAction(state) ? `<details class="manual-transit"><summary>手动确认阶段</summary><button data-transit="${availableTransitAction(state)}" class="secondary">${transitActionLabels[availableTransitAction(state)!]}</button></details>` : ""}
@@ -584,6 +608,7 @@ async function importInput(text: string) {
 }
 async function plan(fromGlasses = false) {
   if (busy || !candidateChosen || !destination?.coordinate) return;
+  departureRefreshMessage = "";
   routeOverview = false;
   device.setOverview(false);
   lastMapFrame = undefined;
@@ -696,6 +721,7 @@ function startNavigationTick() {
   if (tick || pageSuspended) return;
   tick = setInterval(() => {
     session.refreshHealth();
+    void refreshMissedDeparture();
     render();
     void drawMap();
   }, 1000);
@@ -709,6 +735,7 @@ function onFix(value: DeviceFix) {
       .filter((item) => value.timestamp - item.timestamp <= 30000)
       .slice(-61);
   }
+  departureRefresh.observe(session.snapshot);
   if (session.snapshot.phase === "ARRIVED") void device.stopLocation();
   if (
     session.snapshot.phase === "NAVIGATING" ||
@@ -716,6 +743,97 @@ function onFix(value: DeviceFix) {
   ) {
     render();
     void drawMap();
+  }
+}
+async function refreshMissedDeparture() {
+  if (
+    mode !== "TRANSIT" ||
+    busy ||
+    pageSuspended ||
+    !destination?.coordinate ||
+    !client.configured
+  )
+    return;
+  const before = session.snapshot;
+  const ticket = departureRefresh.begin(before);
+  if (!ticket) return;
+  const epoch = lifecycleEpoch;
+  departureMessageVersion = ticket.version;
+  departureRefreshMessage = "正在查询下一班";
+  try {
+    const response = await client.request<{
+      routes: Route[];
+      requestVersion: number;
+    }>("/v1/routes/transit", {
+      requestVersion: ticket.version,
+      origin: ticket.origin,
+      originPolicy: "CURRENT_DEVICE_LOCATION",
+      destination,
+      mode: "TRANSIT",
+      departureTime: new Date().toISOString(),
+      waypoints: before.intent?.waypoints || [],
+      routeProvider: "TRANSITOUS",
+      basemapProvider: "GOOGLE_TILES",
+      userConfirmed: true,
+    } satisfies ConfirmedTripRequest);
+    const current = session.snapshot;
+    if (
+      busy ||
+      pageSuspended ||
+      lifecycleEpoch !== epoch ||
+      response.requestVersion !== ticket.version ||
+      !departureRefresh.applicable(ticket, current)
+    )
+      return;
+    const routes = futureTransitRoutes(response.routes);
+    if (!routes.length) {
+      departureRefreshMessage = "暂无可用后续班次，可手动重新规划";
+      return;
+    }
+    const same = routes.find((route) => sameRemainingRides(current, route));
+    // Reuse session validation without mutating the running journey on malformed/expired replies.
+    const candidateSession = new NavigationSession(session.config);
+    const candidateRequest = candidateSession.beginRequest("PLANNING");
+    candidateSession.acceptRoutes(
+      candidateRequest.version,
+      routes,
+      ticket.origin,
+    );
+    if (same) candidateSession.start(same.id, current.location!);
+    // A route query is read-only until this point: old navigation survives failures and stale replies.
+    const request = session.beginRequest("PLANNING");
+    session.acceptRoutes(request.version, routes, ticket.origin);
+    selected = (same || routes[0]).id;
+    routeOverview = false;
+    device.setOverview(false);
+    lastMapFrame = undefined;
+    if (same) {
+      session.start(selected, current.location!);
+      device.setVersion(session.snapshot.version);
+      departureRefreshMessage = "";
+    } else {
+      departureRefreshMessage = "";
+      notice = "后续班次的线路有变化，请确认路线。";
+      await stopNavigation(false);
+      device.showRouteChoices(
+        routes.map((route) => ({
+          id: route.id,
+          summary: glassesCandidateSummary(route),
+        })),
+        selected,
+        request.version,
+      );
+    }
+    render();
+    void drawMap();
+  } catch {
+    if (departureRefresh.applicable(ticket, session.snapshot))
+      departureRefreshMessage = "下一班查询未完成，可手动重新规划";
+  } finally {
+    departureRefresh.finish();
+    if (session.snapshot.version !== ticket.version)
+      departureRefreshMessage = "";
+    if (!pageSuspended) render();
   }
 }
 async function stopNavigation(close: boolean) {

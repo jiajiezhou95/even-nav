@@ -8,6 +8,7 @@ import {
   type StationAccess,
 } from "../../contracts/src/index";
 import { boundedJson, upstream, type Fetcher } from "./index";
+import { selectStationAccessForRoute } from "./station-access";
 
 export const NAVITIME_HOST = "navitime-transport.p.rapidapi.com";
 const name = z.string().trim().min(1).max(200);
@@ -293,6 +294,7 @@ export async function enrichNavitime(
         : "AVAILABLE"
       : (stopped ?? "NO_MATCH");
     if (matched) route.attribution.push("NAVITIME JAPAN");
+    selectStationAccessForRoute(route);
   }
   return output;
 }

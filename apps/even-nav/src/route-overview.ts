@@ -23,6 +23,12 @@ function stationAccessOverview(leg: Route["legs"][number]): string[] {
     const access = stop?.stationAccess;
     if (!access?.gateways.length || seen.has(access.nodeId)) return [];
     seen.add(access.nodeId);
+    if (access.selectedGateway) {
+      const selected = access.selectedGateway;
+      return [
+        `${stop?.name ? `${stop.name} · ` : ""}建议${selected.reference === "WALK_ORIGIN" ? "入口" : "出口"}：${selected.name}（直线最近 ${Math.round(selected.distanceMeters)}米）`,
+      ];
+    }
     return [
       `${stop?.name ? `${stop.name} · ` : ""}可选出入口（NAVITIME）`,
       ...new Set(access.gateways.map((gateway) => gateway.name)),

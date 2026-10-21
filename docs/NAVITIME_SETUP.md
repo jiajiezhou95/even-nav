@@ -17,7 +17,7 @@ This does not subscribe to a plan. The backend uses `NAVITIME_RAPIDAPI_KEY`. Con
 ## Capabilities
 
 - Free Transport exposes `/transport_link` and `/transport_node/gateway` at `https://navitime-transport.p.rapidapi.com` with RapidAPI authentication headers.
-- Gateways are candidate entrances/exits, not a selected pedestrian path. They do not establish opening hours, accessibility, or connection feasibility. Navigation must not prescribe an unverified gateway.
+- Gateways are matched to the station and ranked by straight-line distance to the adjacent walking leg's origin (boarding) or destination (alighting). The nearest unambiguous candidate is highlighted; transfers use their local walking endpoints. This does not establish opening hours, accessibility, connection feasibility, or the shortest walk. Route geometry is not silently redirected through a gateway. Missing geometry or sub-metre ties retain candidates without selecting one.
 - Direction-dependent carriage advice is omitted without verified train direction.
 - Platform numbers remain those supplied by the route provider. NAVITIME's `/transport_diagram/segment` has optional `platform.name`, but is not offered by free Transport. It is not called; missing platforms are not invented.
 - Missing credentials, ambiguous identities, missing data, quota limits, and upstream failures preserve the Transitous itinerary. GPS updates do not trigger these queries.

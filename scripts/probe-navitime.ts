@@ -66,6 +66,9 @@ try {
         stopsWithExits: route.legs
           .flatMap((leg) => [leg.fromStop, leg.toStop])
           .filter((stop) => stop?.stationAccess?.gateways.length).length,
+        stopsWithSelectedExit: route.legs
+          .flatMap((leg) => [leg.fromStop, leg.toStop])
+          .filter((stop) => stop?.stationAccess?.selectedGateway).length,
       })) ?? [];
     const found = statuses.some((status) => status.stopsWithExits > 0);
     console.log(

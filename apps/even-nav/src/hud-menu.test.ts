@@ -83,6 +83,17 @@ describe("complete route overview text", () => {
       expect(transitLegOverview({ ...enriched, mode })).toContain(
         "可选出入口（NAVITIME）\nA1口\nA2口",
       );
+    const recommended = structuredClone(enriched);
+    recommended.fromStop.stationAccess.selection = "NEAREST_STRAIGHT_LINE";
+    recommended.fromStop.stationAccess.selectedGateway = {
+      ...access.gateways[2],
+      distanceMeters: 42.3,
+      reference: "WALK_ORIGIN",
+    };
+    const recommendation = transitLegOverview(recommended);
+    expect(recommendation).toContain("甲駅 · 建议入口：A3口（直线最近 42米）");
+    expect(recommendation).not.toContain("A1口");
+    expect(recommended.steps).toEqual([]);
   });
   it("retains long Chinese and newlines across nine-line full-width pages and packs short steps together", () => {
     const text =

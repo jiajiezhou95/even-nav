@@ -261,6 +261,149 @@ async function state(page: Page) {
   });
 }
 
+for (const failRefresh of [false, true])
+  test(`missed train refresh ${failRefresh ? "HTTP failure keeps old navigation without retries" : "uses a real future service on the confirmed line"}`, async ({
+    page,
+  }) => {
+    await page.getByRole("button", { name: "开始导航 ↗" }).click();
+    let requests = 0;
+    await page.route("https://worker.test/v1/routes/transit", async (route) => {
+      requests++;
+      const next = requests > 1;
+      if (next && failRefresh) {
+        // More GPS/timer ticks occur while the one upstream request is pending.
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        return route.fulfill({
+          status: 503,
+          json: { error: { code: "PROVIDER_UNAVAILABLE" } },
+        });
+      }
+      const departure = next ? 600 : 30;
+      const ride = legs[1];
+      if (!("fromStop" in ride) || !("toStop" in ride))
+        throw new Error("Synthetic ride fixture must include both stops");
+      const transitLegs = [
+        {
+          ...segment("WALK", 0, 0, 500, 0, 0, departure),
+          from: "当前位置",
+          to: "合成起点站",
+        },
+        {
+          ...ride,
+          startTime: time(departure),
+          endTime: time(departure + 100),
+          geometry: [point(500), point(1500)],
+          fromStop: {
+            ...ride.fromStop,
+            coordinate: point(500),
+            departureTime: time(departure),
+          },
+          toStop: {
+            ...ride.toStop,
+            coordinate: point(1500),
+            arrivalTime: time(departure + 100),
+          },
+        },
+        {
+          ...segment(
+            "WALK",
+            1500,
+            0,
+            1500,
+            200,
+            departure + 100,
+            departure + 240,
+          ),
+          from: "合成终点站",
+          to: "最终目的地",
+        },
+      ];
+      await route.fulfill({
+        json: {
+          requestVersion: route.request().postDataJSON().requestVersion,
+          routes: [
+            {
+              id: next ? "next-real-service" : "missed-service",
+              provider: "TRANSITOUS",
+              basemapProvider: "GOOGLE_TILES",
+              fetchedAt: new Date(epoch + (next ? 35000 : 0)).toISOString(),
+              expiresAt: time(3600),
+              distanceMeters: 1700,
+              durationSeconds: departure + 240,
+              warnings: [],
+              attribution: [
+                "© OpenStreetMap contributors",
+                "Transitous",
+                "NAVITIME JAPAN",
+              ],
+              legs: transitLegs,
+            },
+          ],
+        },
+      });
+    });
+    await page.getByRole("button", { name: "重新规划", exact: true }).click();
+    await page.getByRole("button", { name: "开始导航 ↗" }).click();
+    await expect(page.locator("#nav-departure")).toContainText(
+      "计划发车 09:00 · 0分",
+    );
+    for (let second = 1; second <= 36; second++) {
+      await page.clock.fastForward(1000);
+      await page.evaluate(
+        (coordinate) => (window as any).emitFix(coordinate),
+        point(0),
+      );
+    }
+    if (failRefresh) {
+      await expect(page.locator("#nav-departure")).toContainText(
+        "下一班查询未完成",
+      );
+      expect(
+        await page.evaluate(() => (window as any).navSession.snapshot.route.id),
+      ).toBe("missed-service");
+      expect((await state(page)).phase).toBe("NAVIGATING");
+      for (let i = 0; i < 65; i++) {
+        await page.clock.fastForward(1000);
+        await page.evaluate(
+          (coordinate) => (window as any).emitFix(coordinate),
+          point(0),
+        );
+      }
+      expect(requests).toBe(2);
+      await expect(page.locator("#nav-departure")).not.toContainText("09:10");
+      return;
+    }
+    await expect
+      .poll(() =>
+        page.evaluate(() => (window as any).navSession.snapshot.route.id),
+      )
+      .toBe("next-real-service");
+    expect(requests).toBe(2);
+    expect((await state(page)).phase).toBe("NAVIGATING");
+    await expect(page.locator("#nav-departure")).toContainText("09:10");
+    await expect
+      .poll(() => page.evaluate(() => (window as any).lastFrame.status))
+      .toContain("09:10");
+    await page.screenshot({
+      path: ".local/evidence/transit-departure-phone.png",
+      fullPage: true,
+    });
+    await expect
+      .poll(() =>
+        page.evaluate(() => Object.keys((window as any).hudImages).length),
+      )
+      .toBe(4);
+    await nativeImage(page, ".local/evidence/transit-departure-g2.png");
+    for (let i = 0; i < 10; i++) {
+      await page.clock.fastForward(1000);
+      await page.evaluate(
+        (coordinate) => (window as any).emitFix(coordinate),
+        point(0),
+      );
+    }
+    expect(requests).toBe(2);
+  });
+
 test("automatic boarding and alighting need no clicks; transit overview preserves every supplied stop", async ({
   page,
 }) => {

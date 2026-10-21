@@ -59,6 +59,57 @@ function gateway(url: URL) {
   };
 }
 describe("NAVITIME optional free Transport enrichment", () => {
+  it("selects access independently for alternative walking approaches without extra provider calls", async () => {
+    const input = routes();
+    const walk = (lng: number) => ({
+      mode: "WALK" as const,
+      geometry: [
+        { lat: 35, lng },
+        { lat: 35, lng: 139 },
+      ],
+      steps: [],
+      distanceMeters: 100,
+      durationSeconds: 60,
+    });
+    input[0]!.legs.unshift(walk(138.99));
+    input.push(structuredClone(input[0]!));
+    input[1]!.legs[0] = walk(139.01);
+    const fetcher = vi.fn(async (raw: string | URL | Request) => {
+      const url = new URL(String(raw));
+      if (url.pathname === "/transport_link") return Response.json(search());
+      const data = gateway(url);
+      data.count.total = 2;
+      data.items = [
+        {
+          name: "West",
+          coord: { lat: data.node.coord.lat, lon: data.node.coord.lon - 0.001 },
+          getoff: "",
+        },
+        {
+          name: "East",
+          coord: { lat: data.node.coord.lat, lon: data.node.coord.lon + 0.001 },
+          getoff: "",
+        },
+      ];
+      return Response.json(data);
+    });
+    const result = await enrichNavitime(
+      input,
+      "synthetic",
+      async () => {},
+      fetcher,
+    );
+    expect(fetcher).toHaveBeenCalledTimes(5);
+    expect(
+      result[0]!.legs[1]!.fromStop?.stationAccess?.selectedGateway?.name,
+    ).toBe("West");
+    expect(
+      result[1]!.legs[1]!.fromStop?.stationAccess?.selectedGateway?.name,
+    ).toBe("East");
+    expect(
+      result[0]!.legs[1]!.toStop?.stationAccess?.selectedGateway,
+    ).toBeUndefined();
+  });
   it("skips numeric route IDs then matches reviewed bilingual Tokyo Metro identity", async () => {
     const input = routes();
     const ride = input[0]!.legs[0]!;
