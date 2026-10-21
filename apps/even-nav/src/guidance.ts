@@ -1,6 +1,7 @@
 import type { NavigationState } from "../../../packages/core/src/navigation";
 import type { Mode } from "../../../packages/contracts/src/index";
 import { staleInstruction } from "./freshness";
+import { geometryLength } from "../../../packages/core/src/geometry";
 
 const actions: Record<string, string> = {
   TURN_LEFT: "向左转",
@@ -159,18 +160,130 @@ export function currentStepDetail(state: NavigationState): string {
   );
 }
 
-/** Existing tick drives the dot; retained numbers are never extrapolated. */
+/** Estimate each remaining segment independently; waiting is never scaled by distance. */
+export function estimatedArrival(
+  state: NavigationState,
+  mode: Mode,
+  now = Date.now(),
+): number | undefined {
+  if (
+    state.paused ||
+    state.phase !== "NAVIGATING" ||
+    !state.route ||
+    !Number.isFinite(now)
+  )
+    return;
+  const valid = (n: number) => Number.isFinite(n) && n >= 0;
+  if (
+    !Number.isInteger(state.legIndex) ||
+    state.legIndex < 0 ||
+    state.legIndex >= state.route.legs.length
+  )
+    return;
+  const stale = state.locationStale || guidanceView(state, mode, now).stale;
+  let cursor = stale ? state.location?.timestamp : now;
+  if (cursor === undefined || !valid(cursor) || cursor > now) return;
+  for (let index = state.legIndex; index < state.route.legs.length; index++) {
+    const leg = state.route.legs[index];
+    const current = index === state.legIndex;
+    if (!valid(leg.durationSeconds)) return;
+    if (leg.mode === "WAIT" || leg.mode === "RIDE") {
+      const start =
+        leg.startTime === undefined ? undefined : Date.parse(leg.startTime);
+      const end =
+        leg.endTime === undefined ? undefined : Date.parse(leg.endTime);
+      if (
+        (start !== undefined && !valid(start)) ||
+        (end !== undefined && !valid(end)) ||
+        (start !== undefined && end !== undefined && end < start)
+      )
+        return;
+      // A missed departure or an unconfirmed arrival cannot produce a reliable ETA.
+      if (end !== undefined) {
+        if (
+          cursor > end ||
+          (!current &&
+            leg.mode === "RIDE" &&
+            start !== undefined &&
+            cursor > start)
+        )
+          return;
+        cursor = end;
+      } else {
+        if (start !== undefined) {
+          if (!current && cursor > start) return;
+          cursor = Math.max(cursor, start);
+        }
+        cursor += leg.durationSeconds * 1000;
+      }
+    } else if (current && leg.steps.length) {
+      if (
+        !Number.isInteger(state.stepIndex) ||
+        state.stepIndex < 0 ||
+        state.stepIndex >= leg.steps.length ||
+        !valid(state.stepRemainingMeters)
+      )
+        return;
+      const step = leg.steps[state.stepIndex];
+      const length = step.geometry.length
+        ? geometryLength(step.geometry)
+        : step.distanceMeters;
+      if (!valid(length) || !valid(step.durationSeconds)) return;
+      let seconds =
+        step.durationSeconds *
+        (length > 0 ? Math.min(1, state.stepRemainingMeters / length) : 1);
+      for (const future of leg.steps.slice(state.stepIndex + 1)) {
+        if (!valid(future.durationSeconds)) return;
+        seconds += future.durationSeconds;
+      }
+      cursor += seconds * 1000;
+    } else {
+      if (
+        current &&
+        (!valid(state.progressMeters) || !valid(leg.distanceMeters))
+      )
+        return;
+      const fraction =
+        current && leg.distanceMeters > 0
+          ? Math.max(0, 1 - state.progressMeters / leg.distanceMeters)
+          : 1;
+      cursor += leg.durationSeconds * fraction * 1000;
+    }
+  }
+  return cursor >= now && Number.isFinite(new Date(cursor).getTime())
+    ? cursor
+    : undefined;
+}
+
+function clockText(timestamp: number | undefined): string {
+  if (
+    timestamp === undefined ||
+    !Number.isFinite(new Date(timestamp).getTime())
+  )
+    return "--:--";
+  const date = new Date(timestamp);
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+/** Existing tick updates the clock and dot; retained progress is never extrapolated. */
 export function hudStatus(
   state: NavigationState,
   mode: Mode,
   now = Date.now(),
 ): string {
-  const meters = Math.max(0, state.remainingMeters);
-  const total = `总剩余 ${meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${Math.round(meters)} m`}`;
-  if (state.paused) return `${total}\n已暂停`;
+  const meters = state.remainingMeters;
+  const distance =
+    !Number.isFinite(meters) || meters < 0
+      ? "--"
+      : meters >= 1000
+        ? `${(meters / 1000).toFixed(1)} km`
+        : `${Math.round(meters)} m`;
+  const total = `总剩余 ${distance}  现在${clockText(now)}`;
+  if (state.paused) return `${total}\n预计到达 --:-- · 已暂停`;
   if (state.phase === "ARRIVED") return `${total}\n已到达`;
-  if (state.phase !== "NAVIGATING") return total;
-  return guidanceView(state, mode, now).stale
-    ? `${total}\n${Math.floor(now / 1000) % 2 ? "●" : " "} 更新定位中`
-    : total;
+  if (state.phase !== "NAVIGATING") return `${total}\n预计到达 --:--`;
+  const arrival = `预计到达 ${clockText(estimatedArrival(state, mode, now))}`;
+  return guidanceView(state, mode, now).stale || state.locationStale
+    ? `${total}\n${arrival} ${Math.floor(now / 1000) % 2 ? "●" : " "} 更新定位中`
+    : `${total}\n${arrival}`;
 }

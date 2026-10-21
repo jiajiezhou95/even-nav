@@ -33,3 +33,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\TZ\Dropbox\Codex\E
 
 The script changes to the project directory before invoking the official CLI.
 Enter credentials only at its local prompt.
+
+### Glasses controls (0.1.16)
+
+During navigation, double-tap to open the menu. Slide to choose; single-tap to confirm. The menu contains whole-route view, zoom in, zoom out, reselect route and return to navigation. Double-tap also closes the menu or whole-route view.
+
+Reselect queries once from the current location. The glasses show up to three routes with duration and distance; sliding synchronizes the selected phone tab, and a single-tap explicitly starts that route. Phone tab changes also update the glasses selection. Double-tapping cancels the glasses selector and leaves the phone at route selection; it does not resume the obsolete route.
+
+The lower-right HUD shows total remaining distance, phone-local current time and an estimated arrival time. ETA is an estimate from remaining route steps/schedules; unavailable or past estimates show `--:--`. The header reduces text size for long instructions within its existing height, preserving the large map and maneuver icon size.

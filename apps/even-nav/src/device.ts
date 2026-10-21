@@ -21,6 +21,7 @@ import {
   renderCompatibilityMap,
 } from "./hud-renderer";
 import type { GuidanceView } from "./guidance";
+import { HUD_MENU_ITEMS, renderHudMenu, type HudRouteChoice } from "./hud-menu";
 
 export interface DeviceFix {
   coordinate: Coordinate;
@@ -29,7 +30,21 @@ export interface DeviceFix {
   speedMps?: number;
   heading?: number;
 }
-export type DeviceAction = "PAUSE" | "RESUME" | "END" | "ZOOM_IN" | "ZOOM_OUT";
+export type DeviceAction =
+  | "PAUSE"
+  | "RESUME"
+  | "END"
+  | "ZOOM_IN"
+  | "ZOOM_OUT"
+  | "VIEW_ROUTE"
+  | "EXIT_OVERVIEW"
+  | "RESELECT_ROUTE"
+  | "SELECT_ROUTE"
+  | "START_ROUTE";
+export interface RouteChoiceAction {
+  routeId: string;
+  version: number;
+}
 export interface DisplayFailure {
   stage: "PAGE" | "RENDER" | "IMAGE" | "TEXT";
   code: string;
@@ -167,8 +182,10 @@ export class LatestFrameQueue<T> {
   constructor(
     private send: (value: T) => Promise<void>,
     private failed: (error: unknown) => void,
+    private queued?: (value: T) => void,
   ) {}
   push(value: T) {
+    this.queued?.(value);
     this.pending = value;
     if (!this.active) void this.drain();
   }
@@ -239,6 +256,15 @@ export class EvenDevice {
   private pageCalls: PageCallTrace[] = [];
   private version = 0;
   private lastScrollAt = -Infinity;
+  private lastDoubleAt = -Infinity;
+  private latestFrame?: HudFrame;
+  private menuOpen = false;
+  private menuSelected = 0;
+  private routeChoices?: { version: number; items: HudRouteChoice[] };
+  private overview = false;
+  private displayMessage?: string;
+  private presentationEpoch = 0;
+  private pendingClick?: ReturnType<typeof setTimeout>;
   connected = false;
   source: "EVEN" | "BROWSER_DEV" | "NONE" = "NONE";
   readonly queue: LatestFrameQueue<HudFrame>;
@@ -247,7 +273,10 @@ export class EvenDevice {
   constructor(
     private onFix: (fix: DeviceFix) => void,
     private onHealth: (message: string) => void,
-    private onAction: (action: DeviceAction) => void,
+    private onAction: (
+      action: DeviceAction,
+      choice?: RouteChoiceAction,
+    ) => void,
   ) {
     this.queue = new LatestFrameQueue(
       async (frame) => {
@@ -255,18 +284,31 @@ export class EvenDevice {
           return;
         await this.ensurePage();
         if (frame.version !== this.version || !this.connected) return;
+        const presentation = this.presentationEpoch;
         if (this.compatibilityLayout) {
           if (!(await this.sendCompatibilityFrame(frame))) return;
         } else {
           let quadrants: Uint8Array[];
           try {
-            quadrants = await renderHud(frame);
+            quadrants =
+              this.menuOpen || this.displayMessage || this.routeChoices
+                ? await renderHudMenu(
+                    this.menuSelected,
+                    this.displayMessage,
+                    this.routeChoices?.items,
+                  )
+                : await renderHud(frame);
           } catch (error) {
             throw new DisplayError("RENDER", exceptionCode(error));
           }
           // One serialized queue; check generation between every native write.
           for (const [index, tile] of HUD_QUADRANTS.entries()) {
-            if (frame.version !== this.version || !this.connected) return;
+            if (
+              frame.version !== this.version ||
+              !this.connected ||
+              presentation !== this.presentationEpoch
+            )
+              return;
             const pixels = quadrants[index];
             const previous = this.quadrantPixels[index];
             if (
@@ -288,7 +330,14 @@ export class EvenDevice {
             }
             if (result !== "success")
               throw new DisplayError("IMAGE", result, tile.id);
-            if (frame.version !== this.version || !this.connected) return;
+            if (
+              frame.version !== this.version ||
+              !this.connected ||
+              presentation !== this.presentationEpoch
+            ) {
+              this.quadrantPixels = [];
+              return;
+            }
             this.quadrantPixels[index] = pixels.slice();
           }
         }
@@ -338,7 +387,97 @@ export class EvenDevice {
           `G2 ${label} [${failure.stage}:${failure.code}${failure.containerID ? (this.compatibilityLayout ? `，容器 ${failure.containerID}` : `，块 ${failure.containerID}/4`) : ""}]${failure.stage === "PAGE" ? ` [${pageTraceText(this.pageCalls)}]` : ""}${this.connected ? "；设备仍已连接" : "；设备已断开"}`,
         );
       },
+      (frame) => {
+        if (
+          frame.version === this.version &&
+          !this.displayMessage &&
+          !this.routeChoices
+        )
+          this.latestFrame = frame;
+      },
     );
+  }
+  private cancelMenuClick() {
+    if (this.pendingClick !== undefined) clearTimeout(this.pendingClick);
+    this.pendingClick = undefined;
+  }
+  private redrawPresentation() {
+    this.presentationEpoch++;
+    this.quadrantPixels = [];
+    if (this.routeChoices || this.displayMessage)
+      this.queue.push({
+        sequence: 0,
+        version: this.version,
+        pixels: new Uint8Array(),
+        instruction: this.displayMessage || "请选择路线",
+        status: "",
+        attribution: "",
+      });
+    else if (this.latestFrame?.version === this.version)
+      this.queue.push(this.latestFrame);
+  }
+  showRouteChoices(
+    items: HudRouteChoice[],
+    selectedId: string,
+    version: number,
+  ) {
+    if (!this.connected || this.compatibilityLayout || !items.length) return;
+    this.setVersion(version);
+    this.cancelMenuClick();
+    this.menuOpen = false;
+    this.overview = false;
+    this.displayMessage = undefined;
+    this.latestFrame = undefined;
+    this.routeChoices = { version, items: items.slice(0, 3) };
+    this.menuSelected = Math.max(
+      0,
+      this.routeChoices.items.findIndex((item) => item.id === selectedId),
+    );
+    this.redrawPresentation();
+  }
+  selectRouteFromPhone(id: string, version: number) {
+    if (this.routeChoices?.version !== version) return;
+    const index = this.routeChoices.items.findIndex((item) => item.id === id);
+    if (index < 0 || index === this.menuSelected) return;
+    this.menuSelected = index;
+    this.cancelMenuClick();
+    this.redrawPresentation();
+  }
+  setOverview(value: boolean) {
+    this.overview = value;
+    this.menuOpen = false;
+    this.cancelMenuClick();
+    this.presentationEpoch++;
+    this.quadrantPixels = [];
+  }
+  showMessage(message: string) {
+    this.routeChoices = undefined;
+    this.menuOpen = false;
+    this.overview = false;
+    this.cancelMenuClick();
+    this.latestFrame = undefined;
+    this.displayMessage = message;
+    this.presentationEpoch++;
+    this.quadrantPixels = [];
+    this.queue.push({
+      sequence: 0,
+      version: this.version,
+      pixels: new Uint8Array(),
+      instruction: message,
+      status: "",
+      attribution: "",
+    });
+  }
+  private resetPresentation() {
+    this.routeChoices = undefined;
+    this.menuOpen = false;
+    this.overview = false;
+    this.displayMessage = undefined;
+    this.latestFrame = undefined;
+    this.lastSubmission = undefined;
+    this.cancelMenuClick();
+    this.presentationEpoch++;
+    this.quadrantPixels = [];
   }
   private async sendCompatibilityFrame(frame: HudFrame): Promise<boolean> {
     const current = () => frame.version === this.version && this.connected;
@@ -642,6 +781,7 @@ export class EvenDevice {
       this.connected = status.connectType === "connected";
       if (!wasConnected && this.connected) this.pageFailure = undefined;
       this.queue.invalidate();
+      this.resetPresentation();
       this.quadrantPixels = [];
       this.legacyMapPixels = undefined;
       this.legacyIconKey = undefined;
@@ -653,6 +793,7 @@ export class EvenDevice {
     });
     this.unsubscribeEvents = this.bridge.onEvenHubEvent((event) => {
       const item = event.menuItemClickEvent?.itemID;
+      if ((this.menuOpen || this.routeChoices) && item !== undefined) return;
       if (item === 1) this.onAction("PAUSE");
       if (item === 2) this.onAction("RESUME");
       if (item === 3) this.onAction("END");
@@ -663,14 +804,99 @@ export class EvenDevice {
         event.sysEvent?.eventType ??
         event.textEvent?.eventType ??
         event.listEvent?.eventType;
+      const now = Date.now();
+      if (eventType === OsEventTypeList.DOUBLE_CLICK_EVENT) {
+        this.cancelMenuClick();
+        if (now - this.lastDoubleAt < 300) return;
+        this.lastDoubleAt = now;
+        if (this.routeChoices) {
+          this.showMessage("请在手机选择路线");
+          return;
+        }
+        if (
+          !this.connected ||
+          this.compatibilityLayout ||
+          this.displayMessage ||
+          !this.latestFrame ||
+          !this.lastSubmission ||
+          this.latestFrame.version !== this.version
+        )
+          return;
+        if (this.overview) {
+          this.overview = false;
+          this.onAction("EXIT_OVERVIEW");
+          return;
+        }
+        this.menuOpen = !this.menuOpen;
+        this.menuSelected = 0;
+        this.redrawPresentation();
+        return;
+      }
+      if (eventType === OsEventTypeList.CLICK_EVENT) {
+        if (
+          (!this.menuOpen && !this.routeChoices) ||
+          this.pendingClick !== undefined ||
+          now - this.lastDoubleAt < 300
+        )
+          return;
+        const selected = this.menuSelected;
+        const choices = this.routeChoices;
+        this.pendingClick = setTimeout(() => {
+          this.pendingClick = undefined;
+          if (choices) {
+            if (
+              choices !== this.routeChoices ||
+              choices.version !== this.version ||
+              selected !== this.menuSelected
+            )
+              return;
+            const choice = {
+              routeId: choices.items[selected].id,
+              version: choices.version,
+            };
+            this.showMessage("正在开始所选路线");
+            this.onAction("START_ROUTE", choice);
+            return;
+          }
+          if (!this.menuOpen || selected !== this.menuSelected) return;
+          this.menuOpen = false;
+          this.redrawPresentation();
+          const action = HUD_MENU_ITEMS[selected].action;
+          if (action !== "RETURN_NAVIGATION") this.onAction(action);
+        }, 300);
+        return;
+      }
       if (
         eventType !== OsEventTypeList.SCROLL_TOP_EVENT &&
         eventType !== OsEventTypeList.SCROLL_BOTTOM_EVENT
       )
         return;
-      const now = Date.now();
       if (now - this.lastScrollAt < 250) return;
       this.lastScrollAt = now;
+      if (this.routeChoices) {
+        this.cancelMenuClick();
+        this.menuSelected =
+          (this.menuSelected +
+            (eventType === OsEventTypeList.SCROLL_TOP_EVENT ? -1 : 1) +
+            this.routeChoices.items.length) %
+          this.routeChoices.items.length;
+        this.redrawPresentation();
+        this.onAction("SELECT_ROUTE", {
+          routeId: this.routeChoices.items[this.menuSelected].id,
+          version: this.routeChoices.version,
+        });
+        return;
+      }
+      if (this.menuOpen) {
+        this.cancelMenuClick();
+        this.menuSelected =
+          (this.menuSelected +
+            (eventType === OsEventTypeList.SCROLL_TOP_EVENT ? -1 : 1) +
+            HUD_MENU_ITEMS.length) %
+          HUD_MENU_ITEMS.length;
+        this.redrawPresentation();
+        return;
+      }
       this.onAction(
         eventType === OsEventTypeList.SCROLL_TOP_EVENT ? "ZOOM_IN" : "ZOOM_OUT",
       );
@@ -793,10 +1019,13 @@ export class EvenDevice {
     this.subscribed = false;
   }
   setVersion(version: number) {
+    if (version !== this.version || this.displayMessage)
+      this.resetPresentation();
     this.version = version;
     this.queue.invalidate();
   }
   async close() {
+    this.resetPresentation();
     this.queue.invalidate();
     await this.stopLocation();
     this.unsubscribeDevice?.();

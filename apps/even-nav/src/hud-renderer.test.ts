@@ -1,7 +1,35 @@
 import { describe, expect, it } from "vitest";
-import { hudCueText, wrapHudText } from "./hud-renderer";
+import { fitHudHeader, hudCueText, wrapHudText } from "./hud-renderer";
 
 describe("HUD B content", () => {
+  const measure = (text: string, size: number) =>
+    Array.from(text).length * size;
+  it("keeps short cues at 21px and fits longer cues inside the fixed header", () => {
+    expect(fitHudHeader("直行 120 米", 218, measure).fontSize).toBe(21);
+    const text = "然后沿东侧地下通道进入中央车站南侧入口";
+    const fit = fitHudHeader(text, 182, measure);
+    expect(fit.fontSize).toBeLessThan(21);
+    expect(fit.fontSize).toBeGreaterThanOrEqual(14);
+    expect(fit.lines.join("")).toBe(text);
+    expect(fit.lines.length * fit.lineHeight).toBeLessThanOrEqual(56);
+    expect(fit.lines.every((line) => measure(line, fit.fontSize) <= 182)).toBe(
+      true,
+    );
+  });
+  it("ellipsizes only at the readable floor, preserving the action prefix and distance", () => {
+    const fit = fitHudHeader(
+      `乘坐 ${"合成超长线路名称".repeat(30)} 120 米`,
+      218,
+      measure,
+      "120 米",
+    );
+    expect(fit.fontSize).toBe(14);
+    expect(fit.lines.join("")).toMatch(/^乘坐 .*… 120 米$/);
+    expect(fit.lines.length * fit.lineHeight).toBeLessThanOrEqual(56);
+    expect(fit.lines.every((line) => measure(line, fit.fontSize) <= 218)).toBe(
+      true,
+    );
+  });
   it("uses structured current remaining distance and next maneuver without provider prose", () => {
     expect(
       hudCueText({

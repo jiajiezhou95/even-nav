@@ -9,6 +9,7 @@ import {
 import { project, unproject } from "./map";
 import { staleInstruction } from "./freshness";
 import { getEvenBridge } from "./runtime";
+import { renderHudMenu } from "./hud-menu";
 import {
   CreateStartUpPageContainer,
   RebuildPageContainer,
@@ -28,6 +29,20 @@ import {
 vi.mock("./runtime", () => ({
   isEvenHost: () => true,
   getEvenBridge: vi.fn(),
+}));
+vi.mock("./hud-menu", () => ({
+  HUD_MENU_ITEMS: [
+    { label: "查看路线", action: "VIEW_ROUTE" },
+    { label: "放大地图", action: "ZOOM_IN" },
+    { label: "缩小地图", action: "ZOOM_OUT" },
+    { label: "重选路线", action: "RESELECT_ROUTE" },
+    { label: "返回导航", action: "RETURN_NAVIGATION" },
+  ],
+  renderHudMenu: vi.fn(async (selected, message) =>
+    [0, 1, 2, 3].map((i) =>
+      new TextEncoder().encode(`menu/${selected}/${message || ""}/${i}`),
+    ),
+  ),
 }));
 
 vi.mock("./hud-renderer", async (importOriginal) => {
@@ -54,7 +69,202 @@ function rejectBAndRestore() {
     .mockResolvedValueOnce(false);
 }
 
+async function menuDevice() {
+  let receive!: (event: EvenHubEvent) => void;
+  const bridge = {
+    getDeviceInfo: async () => ({
+      model: "g2",
+      status: { connectType: "connected" },
+    }),
+    onDeviceStatusChanged: () => () => {},
+    onEvenHubEvent: (callback: typeof receive) => {
+      receive = callback;
+      return () => {};
+    },
+    createStartUpPageContainer: vi.fn(async () => 0),
+    rebuildPageContainer: vi.fn(async () => true),
+    updateImageRawData: vi.fn(
+      async (_value: { containerID: number; imageData: number[] }) => "success",
+    ),
+  };
+  vi.mocked(getEvenBridge).mockResolvedValue(bridge as never);
+  const action = vi.fn();
+  const device = new EvenDevice(
+    () => {},
+    () => {},
+    action,
+  );
+  await device.connect();
+  const frame = {
+    sequence: 1,
+    version: 0,
+    pixels: new Uint8Array([1]),
+    instruction: "直行",
+    status: "",
+    attribution: "Synthetic",
+  };
+  device.queue.push(frame);
+  await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
+  return {
+    device,
+    bridge,
+    action,
+    frame,
+    emit: (eventType: number, ring = false) =>
+      receive({
+        sysEvent: { eventType, eventSource: ring ? 2 : 1 },
+      } as EvenHubEvent),
+  };
+}
+
 describe("official SDK boundary and display queue", () => {
+  it("wraps over the fifth return item and closes without any navigation action", async () => {
+    const { device, action, emit } = await menuDevice();
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    try {
+      emit(3);
+      now.mockReturnValue(1400);
+      emit(1);
+      await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
+      expect(vi.mocked(renderHudMenu).mock.lastCall?.[0]).toBe(4);
+      emit(0);
+      await new Promise((resolve) => setTimeout(resolve, 320));
+      expect(action).not.toHaveBeenCalled();
+      expect(device.queue.inFlight).toBe(false);
+    } finally {
+      now.mockRestore();
+    }
+  });
+  it("synchronizes route choices, confirms once and cancels stale or double-click selection safely", async () => {
+    const { device, action, emit } = await menuDevice();
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    const choices = [
+      { id: "a", summary: "3 分钟" },
+      { id: "b", summary: "5 分钟" },
+    ];
+    try {
+      device.showRouteChoices(choices, "a", 7);
+      emit(2);
+      emit(2);
+      expect(action).toHaveBeenCalledExactlyOnceWith("SELECT_ROUTE", {
+        routeId: "b",
+        version: 7,
+      });
+      device.selectRouteFromPhone("a", 7);
+      await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
+      expect(vi.mocked(renderHudMenu).mock.lastCall?.[0]).toBe(0);
+      emit(0);
+      emit(0);
+      await vi.waitFor(() =>
+        expect(action).toHaveBeenCalledWith("START_ROUTE", {
+          routeId: "a",
+          version: 7,
+        }),
+      );
+      expect(action).toHaveBeenCalledTimes(2);
+      device.showRouteChoices(choices, "a", 8);
+      now.mockReturnValue(1400);
+      emit(0);
+      device.setVersion(9);
+      await new Promise((resolve) => setTimeout(resolve, 320));
+      expect(action).toHaveBeenCalledTimes(2);
+      device.showRouteChoices(choices, "a", 9);
+      now.mockReturnValue(1800);
+      emit(0);
+      emit(3);
+      await new Promise((resolve) => setTimeout(resolve, 320));
+      expect(action).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(renderHudMenu).mock.lastCall?.[1]).toBe(
+        "请在手机选择路线",
+      );
+    } finally {
+      now.mockRestore();
+    }
+  });
+  it("uses the serialized raster menu, absorbs duplicate/ring events and confirms one selected action", async () => {
+    const { device, bridge, action, frame, emit } = await menuDevice();
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    try {
+      emit(3, true);
+      emit(3);
+      emit(3);
+      emit(0);
+      await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
+      expect(vi.mocked(renderHudMenu).mock.lastCall?.[0]).toBe(0);
+      now.mockReturnValue(1400);
+      emit(2);
+      emit(2);
+      device.queue.push({ ...frame, sequence: 2, pixels: new Uint8Array([2]) });
+      await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
+      expect(vi.mocked(renderHudMenu).mock.lastCall?.[0]).toBe(1);
+      expect(action).not.toHaveBeenCalled();
+      emit(0);
+      emit(0);
+      await vi.waitFor(() =>
+        expect(action).toHaveBeenCalledExactlyOnceWith("ZOOM_IN"),
+      );
+      await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
+      expect(vi.mocked(renderHud).mock.lastCall?.[0].pixels[0]).toBe(2);
+      expect(bridge.createStartUpPageContainer).toHaveBeenCalledTimes(1);
+      expect(bridge.rebuildPageContainer).toHaveBeenCalledTimes(1);
+    } finally {
+      now.mockRestore();
+    }
+  });
+  it("cancels a click when double tapping closes the menu, exits overview and ignores expired frames", async () => {
+    const { device, action, emit } = await menuDevice();
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    try {
+      emit(3);
+      now.mockReturnValue(1400);
+      emit(0);
+      emit(3);
+      emit(0);
+      await new Promise((resolve) => setTimeout(resolve, 320));
+      expect(action).not.toHaveBeenCalled();
+      device.setOverview(true);
+      now.mockReturnValue(1800);
+      emit(3);
+      emit(3);
+      expect(action).toHaveBeenCalledExactlyOnceWith("EXIT_OVERVIEW");
+      device.setVersion(1);
+      now.mockReturnValue(2200);
+      emit(3);
+      emit(0);
+      expect(action).toHaveBeenCalledTimes(1);
+    } finally {
+      now.mockRestore();
+    }
+  });
+  it("restores every quadrant when a menu closes during an in-flight native write", async () => {
+    const { device, bridge, frame, emit } = await menuDevice();
+    let release!: () => void;
+    bridge.updateImageRawData.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return "success";
+    });
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    try {
+      const before = bridge.updateImageRawData.mock.calls.length;
+      emit(3);
+      await vi.waitFor(() => expect(release).toBeDefined());
+      now.mockReturnValue(1400);
+      emit(3);
+      device.queue.push({ ...frame, sequence: 3 });
+      release();
+      await vi.waitFor(() => expect(device.queue.inFlight).toBe(false));
+      const writes = bridge.updateImageRawData.mock.calls.slice(before);
+      expect(writes.map(([v]) => v.containerID)).toEqual([1, 1, 2, 3, 4]);
+      expect(
+        new TextDecoder().decode(new Uint8Array(writes[1][0].imageData)),
+      ).toBe("1/直行");
+      expect(device.lastSubmission?.sequence).toBe(3);
+    } finally {
+      now.mockRestore();
+    }
+  });
   it("waits for baseline startup success before one B rebuild and four-image dispatch", async () => {
     let release!: (result: number) => void;
     const bridge = {

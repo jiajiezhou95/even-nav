@@ -13,7 +13,12 @@ import {
   type ConfirmedTripRequest,
 } from "../../../packages/contracts/src/index";
 import { WorkerClient } from "./client";
-import { EvenDevice, type DeviceAction, type DeviceFix } from "./device";
+import {
+  EvenDevice,
+  type DeviceAction,
+  type DeviceFix,
+  type RouteChoiceAction,
+} from "./device";
 import { NavigationMap } from "./map";
 import { staleThreshold } from "./freshness";
 import { createCredentialStore, DeviceCredentials } from "./credentials";
@@ -96,6 +101,7 @@ let mapBusy = false,
   previousMapVersion = -1;
 let zoomRedraw: ReturnType<typeof setTimeout> | undefined;
 let navigationViewKey = "";
+let routeOverview = false;
 let directionHistory: DeviceFix[] = [];
 let pageSuspended = false,
   lifecycleEpoch = 0;
@@ -115,7 +121,7 @@ const device = new EvenDevice(
     health = message;
     renderHealth();
   },
-  (action) => void handleAction(action),
+  (action, choice) => void handleAction(action, choice),
 );
 
 $("#app").innerHTML = `
@@ -275,6 +281,7 @@ function render() {
         mode,
         busy,
         device.source,
+        routeOverview,
       ])
     : "";
   if (
@@ -357,6 +364,8 @@ function render() {
     .querySelectorAll<HTMLDetailsElement>(".navigation details")
     .forEach((detail, i) => {
       detail.open = openedDetails[i] || false;
+      if (routeOverview && detail.classList.contains("full-itinerary"))
+        detail.open = true;
     });
   $("#cancel")?.addEventListener("click", cancel);
   $("#candidate")?.addEventListener("change", (event) => {
@@ -397,6 +406,7 @@ function render() {
   routeTabs.forEach((button, index) => {
     button.onclick = () => {
       selected = button.dataset.route!;
+      device.selectRouteFromPhone(selected, session.snapshot.version);
       render();
       $<HTMLButtonElement>(`#route-tab-${index}`)?.focus({
         preventScroll: true,
@@ -537,8 +547,11 @@ async function importInput(text: string, selectedFromGoogleMap = false) {
     }
   }
 }
-async function plan() {
+async function plan(fromGlasses = false) {
   if (busy || !candidateChosen || !destination?.coordinate) return;
+  routeOverview = false;
+  device.setOverview(false);
+  lastMapFrame = undefined;
   const intent = session.snapshot.intent!;
   const originChoice = originSelection;
   const departure = departureSelection;
@@ -550,6 +563,7 @@ async function plan() {
   try {
     await stopNavigation(false);
     if (request.signal.aborted) return;
+    if (fromGlasses) device.showMessage("正在查询路线");
     const current = await device.locate();
     if (request.signal.aborted) return;
     const sharedOrigin = intent.originCandidate?.coordinate;
@@ -601,10 +615,20 @@ async function plan() {
           $("#workflow").scrollIntoView({ behavior: "auto", block: "start" });
       });
       void drawMap();
+      if (fromGlasses)
+        device.showRouteChoices(
+          response.routes.slice(0, 3).map((route) => ({
+            id: route.id,
+            summary: `${duration(route.durationSeconds)} · ${distance(route.distanceMeters)}`,
+          })),
+          selected,
+          request.version,
+        );
     }
   } catch (caught) {
     if (!request.signal.aborted) {
       session.cancel();
+      if (fromGlasses) device.showMessage("路线查询未完成，请查看手机");
       report(caught);
     }
   }
@@ -668,6 +692,8 @@ function onFix(value: DeviceFix) {
   }
 }
 async function stopNavigation(close: boolean) {
+  routeOverview = false;
+  device.setOverview(false);
   if (zoomRedraw) clearTimeout(zoomRedraw);
   zoomRedraw = undefined;
   if (close) await imuProbe?.stop();
@@ -677,7 +703,54 @@ async function stopNavigation(close: boolean) {
   await device.stopLocation();
   if (close) await device.close();
 }
-async function handleAction(action: DeviceAction) {
+async function handleAction(action: DeviceAction, choice?: RouteChoiceAction) {
+  if (action === "SELECT_ROUTE" || action === "START_ROUTE") {
+    const state = session.snapshot;
+    if (
+      busy ||
+      pageSuspended ||
+      imuBlocksNavigation() ||
+      !choice ||
+      state.phase !== "ROUTE_SELECTION" ||
+      state.version !== choice.version ||
+      !state.routes.slice(0, 3).some((route) => route.id === choice.routeId)
+    )
+      return;
+    selected = choice.routeId;
+    render();
+    if (action === "START_ROUTE") {
+      await start();
+      if (
+        !["NAVIGATING", "ARRIVED"].includes(session.snapshot.phase) ||
+        session.snapshot.paused
+      )
+        device.showMessage("路线未启动，请查看手机");
+    }
+    return;
+  }
+  if (
+    action === "VIEW_ROUTE" ||
+    action === "EXIT_OVERVIEW" ||
+    action === "RESELECT_ROUTE"
+  ) {
+    if (
+      busy ||
+      pageSuspended ||
+      imuBlocksNavigation() ||
+      !["NAVIGATING", "ARRIVED"].includes(session.snapshot.phase)
+    )
+      return;
+    if (action === "RESELECT_ROUTE") {
+      await plan(true);
+      return;
+    }
+    routeOverview = action === "VIEW_ROUTE";
+    device.setOverview(routeOverview);
+    lastFrame = 0;
+    render();
+    await drawMap();
+    return;
+  }
   if (action === "ZOOM_IN" || action === "ZOOM_OUT") {
     if (
       pageSuspended ||
@@ -767,6 +840,7 @@ async function drawMap() {
   }
   mapBusy = true;
   const version = state.version;
+  const overview = routeOverview;
   if (version !== previousMapVersion) {
     map.clear();
     previousMapVersion = version;
@@ -784,7 +858,11 @@ async function drawMap() {
       destination,
       route,
       state.location?.coordinate || fix?.coordinate,
-      state.phase === "ROUTE_SELECTION" ? state.routes.slice(0, 3) : [],
+      state.phase === "ROUTE_SELECTION"
+        ? state.routes.slice(0, 3)
+        : overview && route
+          ? [route]
+          : [],
       bearing === undefined || !state.location
         ? undefined
         : {
@@ -793,7 +871,8 @@ async function drawMap() {
             maxAgeMs: staleThreshold(mode),
           },
     );
-    if (version !== session.snapshot.version) return;
+    if (version !== session.snapshot.version || overview !== routeOverview)
+      return;
     mapError = "";
     if (
       map.ready &&
@@ -803,9 +882,10 @@ async function drawMap() {
     ) {
       lastFrame = Date.now();
       const pixels = await map.pixels();
-      const icon = guidanceView(state, mode).icon;
+      const icon = overview ? "none" : guidanceView(state, mode).icon;
       const iconPixels = await maneuverPng(icon);
-      if (version !== session.snapshot.version) return;
+      if (version !== session.snapshot.version || overview !== routeOverview)
+        return;
       lastMapFrame = {
         version,
         pixels,
@@ -817,8 +897,8 @@ async function drawMap() {
         version,
         pixels,
         icon: { key: icon, pixels: iconPixels },
-        guidance: guidanceView(state, mode),
-        instruction: instruction(state),
+        guidance: overview ? undefined : guidanceView(state, mode),
+        instruction: overview ? "全程路线 · 双击返回导航" : instruction(state),
         status: hudStatus(state, mode),
         attribution: map.attribution,
       });

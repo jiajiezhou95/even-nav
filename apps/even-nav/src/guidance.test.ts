@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { NavigationSession } from "../../../packages/core/src/navigation";
 import type { Route } from "../../../packages/contracts/src/index";
-import { conciseInstruction, currentStepDetail, hudStatus } from "./guidance";
+import {
+  conciseInstruction,
+  currentStepDetail,
+  estimatedArrival,
+  hudStatus,
+} from "./guidance";
+import { geometryLength } from "../../../packages/core/src/geometry";
 
 const now = 1800000000000;
 const points = [0, 1, 2, 3].map((i) => ({ lat: 35, lng: 139 + i * 0.001 }));
@@ -41,6 +47,92 @@ function start() {
   return session;
 }
 describe("compact structured navigation guidance", () => {
+  it("estimates current step plus later steps and legs, not a fraction of whole-trip distance", () => {
+    const state = start().snapshot;
+    state.stepIndex = 1;
+    state.stepRemainingMeters =
+      geometryLength(state.route!.legs[0].steps[1].geometry) / 2;
+    state.route!.legs.push({
+      mode: "WALK",
+      geometry: [],
+      steps: [],
+      distanceMeters: 400,
+      durationSeconds: 300,
+    });
+    expect(estimatedArrival(state, "WALK", now)).toBe(
+      now + (30 + 60 + 300) * 1000,
+    );
+    state.remainingMeters = 1; // Whole-trip ratio must not change this estimate.
+    expect(estimatedArrival(state, "WALK", now)).toBe(now + 390000);
+  });
+  it("uses transit WAIT and RIDE timetables and rejects missed connections", () => {
+    const state = start().snapshot;
+    const leg = (mode: "WAIT" | "RIDE", start: number, end: number) => ({
+      mode,
+      geometry: [],
+      steps: [],
+      distanceMeters: 0,
+      durationSeconds: (end - start) / 1000,
+      startTime: new Date(start).toISOString(),
+      endTime: new Date(end).toISOString(),
+    });
+    state.route!.legs = [
+      leg("WAIT", now - 60000, now + 120000),
+      leg("RIDE", now + 120000, now + 720000),
+      {
+        mode: "WALK",
+        geometry: [],
+        steps: [],
+        distanceMeters: 100,
+        durationSeconds: 900,
+      },
+    ];
+    expect(estimatedArrival(state, "TRANSIT", now)).toBe(now + 1620000);
+    state.legIndex = 1;
+    state.location!.timestamp = now + 300000;
+    expect(estimatedArrival(state, "TRANSIT", now + 300000)).toBe(
+      now + 1620000,
+    );
+    state.legIndex = 0;
+    state.route!.legs[0].endTime = new Date(now + 180000).toISOString();
+    expect(estimatedArrival(state, "TRANSIT", now + 300000)).toBeUndefined();
+    state.location!.timestamp = now;
+    expect(estimatedArrival(state, "TRANSIT", now)).toBeUndefined();
+  });
+  it("freezes stale ETA at the accepted fix while the clock continues, then hides a past ETA", () => {
+    const state = start().snapshot;
+    const eta = estimatedArrival(state, "WALK", now);
+    expect(estimatedArrival(state, "WALK", now + 60000)).toBe(eta);
+    const status = hudStatus(state, "WALK", now + 60000);
+    expect(status).toContain("总剩余 273 m");
+    expect(status).toContain("预计到达");
+    expect(status).toContain("更新定位中");
+    expect(status.split("\n")).toHaveLength(2);
+    expect(estimatedArrival(state, "WALK", now + 240000)).toBeUndefined();
+    expect(hudStatus(state, "WALK", now + 240000)).toContain("预计到达 --:--");
+  });
+  it("formats local date rollover and handles paused, ended and malformed input safely", () => {
+    const state = start().snapshot;
+    const midnight = new Date(2026, 9, 21, 23, 59, 0).getTime();
+    state.location!.timestamp = midnight;
+    expect(hudStatus(state, "WALK", midnight)).toContain(
+      "23:59\n预计到达 00:02",
+    );
+    state.paused = true;
+    expect(hudStatus(state, "WALK", midnight)).toContain(
+      "预计到达 --:-- · 已暂停",
+    );
+    state.paused = false;
+    state.phase = "ENDED";
+    expect(estimatedArrival(state, "WALK", midnight)).toBeUndefined();
+    state.phase = "NAVIGATING";
+    state.route!.legs[0].steps[1].durationSeconds = NaN;
+    expect(estimatedArrival(state, "WALK", midnight)).toBeUndefined();
+    state.remainingMeters = NaN;
+    expect(hudStatus(state, "WALK", NaN)).toBe(
+      "总剩余 --  现在--:--\n预计到达 --:--",
+    );
+  });
   it("ignores compound multiline prose and includes only one structured upcoming maneuver", () => {
     const state = start().snapshot;
     expect(conciseInstruction(state, "WALK", now)).toMatch(

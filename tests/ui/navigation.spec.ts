@@ -1516,6 +1516,41 @@ test("IMU late upload receipt cannot mark a newer sample as uploaded", async ({
 test("SDK scroll gestures zoom the active map without rerouting and ignore non-navigation", async ({
   page,
 }) => {
+  await page.route("https://worker.test/v1/routes/road", (route) => {
+    const request = route.request().postDataJSON();
+    return route.fulfill({
+      json: {
+        requestVersion: request.requestVersion,
+        routes: [0, 1].map((i) => ({
+          id: i === 0 ? "synthetic-road" : "synthetic-second",
+          provider: "GOOGLE_ROUTES",
+          basemapProvider: "GOOGLE_TILES",
+          fetchedAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 600000).toISOString(),
+          distanceMeters: i === 0 ? 230 : 450,
+          durationSeconds: 180 + i * 60,
+          warnings: [],
+          attribution: ["Synthetic route"],
+          legs: [
+            {
+              mode: "WALK",
+              distanceMeters: i === 0 ? 230 : 450,
+              durationSeconds: 180 + i * 60,
+              geometry: [request.origin, request.destination.coordinate],
+              steps: [
+                {
+                  instruction: i === 0 ? "沿道路前行" : "沿第二路线前行",
+                  geometry: [request.origin, request.destination.coordinate],
+                  distanceMeters: i === 0 ? 230 : 450,
+                  durationSeconds: 180 + i * 60,
+                },
+              ],
+            },
+          ],
+        })),
+      },
+    });
+  });
   await page.route("**/src/runtime.ts", (route) =>
     route.fulfill({
       contentType: "application/javascript",
@@ -1568,16 +1603,28 @@ test("SDK scroll gestures zoom the active map without rerouting and ignore non-n
   });
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await pairForImu(page);
-  await page.evaluate(() => {
+  await page.evaluate(async () => {
     let listener: ((event: unknown) => void) | undefined;
     let lastBurstAt = -Infinity;
+    const mapPath = "/src/map.ts";
+    const { NavigationMap } = await import(mapPath);
+    const draw = NavigationMap.prototype.draw;
+    (window as any).mapViews = [];
+    NavigationMap.prototype.draw = async function (...args: any[]) {
+      (window as any).mapViews.push((args[4] || []).map((r: any) => r.id));
+      return draw.apply(this, args);
+    };
+    (window as any).hudImages = {};
+    (window as any).hudWriteCount = 0;
+    (window as any).rebuildCalls = 0;
     (window as any).mockNative = true;
     (window as any).emitScroll = async (eventType: number, count = 1) => {
       // Separate gestures must clear the device's 250 ms deduplication window.
       // Keep each burst synchronous so duplicate suppression is still tested.
-      while (Date.now() - lastBurstAt < 250)
+      const interval = eventType === 0 || eventType === 3 ? 350 : 250;
+      while (Date.now() - lastBurstAt < interval)
         await new Promise((resolve) =>
-          setTimeout(resolve, 250 - (Date.now() - lastBurstAt)),
+          setTimeout(resolve, interval - (Date.now() - lastBurstAt)),
         );
       for (let i = 0; i < count; i++) listener?.({ sysEvent: { eventType } });
       lastBurstAt = Date.now();
@@ -1604,7 +1651,18 @@ test("SDK scroll gestures zoom the active map without rerouting and ignore non-n
       startAppLocationUpdates: async () => true,
       stopAppLocationUpdates: async () => true,
       createStartUpPageContainer: async () => 0,
-      updateImageRawData: async () => "success",
+      rebuildPageContainer: async () => {
+        (window as any).rebuildCalls++;
+        return true;
+      },
+      updateImageRawData: async (value: {
+        containerID: number;
+        imageData: number[];
+      }) => {
+        (window as any).hudImages[value.containerID] = value.imageData;
+        (window as any).hudWriteCount++;
+        return "success";
+      },
       shutDownPageContainer: async () => true,
     };
   });
@@ -1629,6 +1687,138 @@ test("SDK scroll gestures zoom the active map without rerouting and ignore non-n
   await page.evaluate(() => (window as any).emitScroll(2));
   await expect.poll(() => viewports.at(-1)).toBe(16);
   expect(routeCalls).toBe(1);
+  await expect(
+    page.getByText("G2 已连接，大地图", { exact: true }),
+  ).toBeVisible();
+  await page.evaluate(() => (window as any).emitScroll(3, 20));
+  // Read the actual four native PNG writes, not a separate UI illustration.
+  await expect
+    .poll(() =>
+      page.evaluate(() => Object.keys((window as any).hudImages).length),
+    )
+    .toBe(4);
+  await page.evaluate(() => (window as any).emitScroll(0, 20));
+  await expect(page.locator(".full-itinerary")).toHaveAttribute("open", "");
+  await expect
+    .poll(() => page.evaluate(() => (window as any).mapViews.at(-1)))
+    .toEqual(["synthetic-road"]);
+  expect(routeCalls).toBe(1);
+  await page.screenshot({ path: ".local/evidence/overview-phone.png" });
+  await page.evaluate(() => (window as any).emitScroll(3, 20));
+  await expect
+    .poll(() => page.evaluate(() => (window as any).mapViews.at(-1)))
+    .toEqual([]);
+  await page.evaluate(() => (window as any).emitScroll(3));
+  // Waiting for the input boundary also lets the serialized menu image finish.
+  await page.evaluate(() => (window as any).emitScroll(1));
+  await page.evaluate(() => (window as any).emitScroll(1));
+  const menuPng = await page.evaluate(async () => {
+    const path = "/src/hud-menu.ts";
+    const { renderHudMenu } = await import(path);
+    const expected = await renderHudMenu(3);
+    // Poll until all actual writes match the selected-menu compositor output.
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (
+        expected.every(
+          (bytes: Uint8Array, i: number) =>
+            JSON.stringify(Array.from(bytes)) ===
+            JSON.stringify((window as any).hudImages[i + 1]),
+        )
+      )
+        break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      if (attempt === 99)
+        throw new Error("Menu never reached all four native containers");
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = 576;
+    canvas.height = 288;
+    for (let i = 0; i < 4; i++) {
+      const bitmap = await createImageBitmap(
+        new Blob([new Uint8Array((window as any).hudImages[i + 1])], {
+          type: "image/png",
+        }),
+      );
+      if (bitmap.width !== 288 || bitmap.height !== 144)
+        throw new Error("Invalid native menu tile");
+      canvas
+        .getContext("2d")!
+        .drawImage(bitmap, (i % 2) * 288, Math.floor(i / 2) * 144);
+      bitmap.close();
+    }
+    return canvas.toDataURL().split(",")[1];
+  });
+  await writeFile(
+    ".local/evidence/hud-menu-native.png",
+    Buffer.from(menuPng, "base64"),
+  );
+  expect(routeCalls).toBe(1);
+  await page.evaluate(() => (window as any).emitScroll(0, 20));
+  await expect(page.getByRole("tablist", { name: "可选路线" })).toBeVisible();
+  await expect(page.locator(".navigation")).toHaveCount(0);
+  expect(routeCalls).toBe(2);
+  await expect(page.getByRole("button", { name: "开始导航 ↗" })).toBeVisible();
+  expect(await page.evaluate(() => (window as any).rebuildCalls)).toBe(1);
+  await page.evaluate(() => (window as any).emitScroll(2, 20));
+  await expect(
+    page.getByRole("tab", { name: "路线 2 4 分钟", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  const choicesPng = await page.evaluate(async () => {
+    const path = "/src/hud-menu.ts";
+    const { renderHudMenu } = await import(path);
+    const expected = await renderHudMenu(1, undefined, [
+      { id: "synthetic-road", summary: "3 分钟 · 230 m" },
+      { id: "synthetic-second", summary: "4 分钟 · 450 m" },
+    ]);
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (
+        expected.every(
+          (bytes: Uint8Array, i: number) =>
+            JSON.stringify(Array.from(bytes)) ===
+            JSON.stringify((window as any).hudImages[i + 1]),
+        )
+      )
+        break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      if (attempt === 99)
+        throw new Error("Route choices never reached native containers");
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = 576;
+    canvas.height = 288;
+    for (let i = 0; i < 4; i++) {
+      const bitmap = await createImageBitmap(
+        new Blob([new Uint8Array((window as any).hudImages[i + 1])], {
+          type: "image/png",
+        }),
+      );
+      canvas
+        .getContext("2d")!
+        .drawImage(bitmap, (i % 2) * 288, Math.floor(i / 2) * 144);
+      bitmap.close();
+    }
+    return canvas.toDataURL().split(",")[1];
+  });
+  await writeFile(
+    ".local/evidence/hud-route-choices-native.png",
+    Buffer.from(choicesPng, "base64"),
+  );
+  const beforeRestart = await page.evaluate(
+    () => (window as any).hudWriteCount,
+  );
+  await page.evaluate(() => (window as any).emitScroll(0, 20));
+  await expect(page.locator(".navigation")).toBeVisible();
+  await expect(page.locator("#current-step-detail")).toContainText(
+    "沿第二路线前行",
+  );
+  expect(routeCalls).toBe(2);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).hudWriteCount))
+    .toBeGreaterThanOrEqual(beforeRestart + 4);
+  // A new navigation version clears the reselect message and re-enables the menu.
+  await page.evaluate(() => (window as any).emitScroll(3));
+  await page.evaluate(() => (window as any).emitScroll(0));
+  await expect(page.locator(".full-itinerary")).toHaveAttribute("open", "");
   await page.getByRole("button", { name: "结束", exact: true }).click();
   const endedCount = viewports.length;
   await page.evaluate(() => (window as any).emitScroll(1));

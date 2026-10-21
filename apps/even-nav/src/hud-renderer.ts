@@ -41,6 +41,37 @@ export function wrapHudText(
   return lines;
 }
 
+/** Fit only inside the fixed 64px header, reserving four pixels on each edge. */
+export function fitHudHeader(
+  text: string,
+  width: number,
+  measure: (value: string, fontSize: number) => number,
+  retainedSuffix = "",
+) {
+  for (let fontSize = 21; fontSize >= 14; fontSize--) {
+    const lineHeight = fontSize + 3;
+    const lines = wrapHudText(text, width, (value) => measure(value, fontSize));
+    if (lines.length * lineHeight <= 56) return { lines, fontSize, lineHeight };
+  }
+  const fontSize = 14,
+    lineHeight = 17;
+  // Keep the primary cue prefix and its distance even when the route name is extreme.
+  const characters = Array.from(
+    retainedSuffix && text.endsWith(retainedSuffix)
+      ? text.slice(0, -retainedSuffix.length)
+      : text,
+  );
+  while (characters.length) {
+    characters.pop();
+    const candidate = `${characters.join("").trimEnd()}…${retainedSuffix ? ` ${retainedSuffix}` : ""}`;
+    const lines = wrapHudText(candidate, width, (value) =>
+      measure(value, fontSize),
+    );
+    if (lines.length * lineHeight <= 56) return { lines, fontSize, lineHeight };
+  }
+  return { lines: ["…"], fontSize, lineHeight };
+}
+
 export function hudCueText(view: GuidanceView) {
   const distance = view.distance
     ?.replace(/^本段剩余 /, "")
@@ -103,12 +134,33 @@ export async function drawHudCanvas(
     y: number,
     lineHeight: number,
   ) => lines.forEach((line, i) => ctx.fillText(line, x, y + i * lineHeight));
-  const drawHeaderMessage = (message: string) => {
-    const lines = wrapHudText(message, 560, (v) => ctx.measureText(v).width);
-    ctx.fillStyle = "#000";
-    ctx.fillRect(0, 0, HUD_WIDTH, Math.max(64, lines.length * 25 + 14));
-    ctx.fillStyle = "#fff";
-    drawLines(lines, 8, 7, 25);
+  const drawFittedHeader = (
+    message: string,
+    x: number,
+    width: number,
+    suffix = "",
+  ) => {
+    const fit = fitHudHeader(
+      message,
+      width,
+      (value, size) => {
+        ctx.font = `${size}px "Microsoft YaHei", "PingFang SC", sans-serif`;
+        return ctx.measureText(value).width;
+      },
+      suffix,
+    );
+    ctx.font = `${fit.fontSize}px "Microsoft YaHei", "PingFang SC", sans-serif`;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, 4, width, 56);
+    ctx.clip();
+    drawLines(
+      fit.lines,
+      x,
+      (64 - fit.lines.length * fit.lineHeight) / 2,
+      fit.lineHeight,
+    );
+    ctx.restore();
   };
   if (guidance) {
     const view = guidance;
@@ -128,17 +180,18 @@ export async function drawHudCanvas(
       }
       const textX = x + (icon && icon !== "none" ? 58 : 0);
       const width = x === 12 ? 288 - textX : 568 - textX;
-      const lines = wrapHudText(text, width, (v) => ctx.measureText(v).width);
-      if (lines.length > 2) {
-        // Exceptional long transit/terminal instructions get the whole header.
-        drawHeaderMessage([cues.current, cues.next].filter(Boolean).join("；"));
-        break;
-      }
-      drawLines(lines, textX, lines.length === 1 ? 21 : 7, 25);
+      drawFittedHeader(
+        text,
+        textX,
+        width,
+        x === 12 && view.distance
+          ? cues.current.slice(view.action.length).trim()
+          : "",
+      );
     }
   } else {
     // Map/provider failure uses the existing safety message, with no turn arrows.
-    drawHeaderMessage(instruction);
+    drawFittedHeader(instruction, 8, 560);
   }
 
   const hasGoogleBrand = /^Google Maps(?:\s*·\s*|\n|$)/.test(frame.attribution);
@@ -149,16 +202,17 @@ export async function drawHudCanvas(
   const copyrightX = hasGoogleBrand ? 116 : 8;
   const copyrightLines = wrapHudText(
     copyright,
-    462 - copyrightX,
+    328 - copyrightX,
     (v) => ctx.measureText(v).width,
   );
-  const status = frame.status.includes("更新定位中")
-    ? `${frame.status.includes("●") ? "●" : " "} 更新定位中`
-    : frame.status;
-  const statusLines = wrapHudText(status, 100, (v) => ctx.measureText(v).width);
+  const statusLines = wrapHudText(
+    frame.status,
+    236,
+    (v) => ctx.measureText(v).width,
+  );
   const footerHeight = Math.max(
     32,
-    Math.max(copyrightLines.length, statusLines.length) * 15 + 4,
+    Math.max(copyrightLines.length, statusLines.length) * 15 + 2,
   );
   // Expand over the lower map for long copyright rather than shrink or truncate it.
   // Pathologically long content hides the map entirely, never uncredited map output.
@@ -175,7 +229,7 @@ export async function drawHudCanvas(
   ctx.fillRect(0, footerY, HUD_WIDTH, footerHeight);
   ctx.fillStyle = "#fff";
   drawLines(copyrightLines, copyrightX, footerY + 2, 15);
-  drawLines(statusLines, 470, footerY + 2, 15);
+  drawLines(statusLines, 334, footerY + 2, 15);
   if (hasGoogleBrand) {
     ctx.font = "16px Arial, sans-serif";
     ctx.fillText("Google Maps", 8, footerY + (footerHeight - 18) / 2);
