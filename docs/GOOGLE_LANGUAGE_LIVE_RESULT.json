@@ -1,0 +1,14 @@
+{
+  "evidence": "LIVE_PROVIDER_DEPLOYED_WORKER_PUBLIC_ROUTE",
+  "at": "2026-10-20T15:45:46.941Z",
+  "http": 200,
+  "googleCalls": 1,
+  "requestedLanguage": "zh-CN",
+  "instructionCount": 40,
+  "containsChineseAction": true,
+  "firstInstructions": [
+    "向西前行",
+    "向左转，前往丸の内室町線/都道407号",
+    "向右转，前往丸の内室町線/都道407号"
+  ]
+}

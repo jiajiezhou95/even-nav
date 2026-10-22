@@ -1,0 +1,624 @@
+{
+  "evidence": "LIVE_PROVIDER_DEPLOYED_WORKER",
+  "departureTime": "2026-10-21T09:00:00+09:00",
+  "calls": 10,
+  "plannedCalls": 10,
+  "stoppedEarly": false,
+  "results": [
+    {
+      "name": "Asakusa–Shibuya",
+      "at": "2026-10-20T14:38:25.239Z",
+      "http": 200,
+      "status": "ROUTES_RETURNED",
+      "routes": [
+        {
+          "modes": [
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "WAIT",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "浅草線",
+            "20206141",
+            "G"
+          ],
+          "transfers": 2,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 2760
+        },
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "G"
+          ],
+          "transfers": 0,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 2940
+        },
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "8011931",
+            "20206151",
+            "G"
+          ],
+          "transfers": 2,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 2940
+        }
+      ]
+    },
+    {
+      "name": "Tochomae–Daimon",
+      "at": "2026-10-20T14:38:25.816Z",
+      "http": 200,
+      "status": "ROUTES_RETURNED",
+      "routes": [
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "20220041",
+            "20209811",
+            "A"
+          ],
+          "transfers": 2,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 2160
+        },
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "3200601"
+          ],
+          "transfers": 0,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 2400
+        },
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "20220051",
+            "E"
+          ],
+          "transfers": 1,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 2220
+        }
+      ]
+    },
+    {
+      "name": "Tokyo–Mitaka",
+      "at": "2026-10-20T14:38:26.228Z",
+      "http": 200,
+      "status": "ROUTES_RETURNED",
+      "routes": [
+        {
+          "modes": [
+            "WALK",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "9943971"
+          ],
+          "transfers": 0,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 2400
+        },
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "9943981"
+          ],
+          "transfers": 0,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 2580
+        },
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "9943991"
+          ],
+          "transfers": 0,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 2700
+        }
+      ]
+    },
+    {
+      "name": "Shinjuku–Chofu",
+      "at": "2026-10-20T14:38:27.204Z",
+      "http": 200,
+      "status": "ROUTES_RETURNED",
+      "routes": [
+        {
+          "modes": [
+            "WALK",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "KO"
+          ],
+          "transfers": 0,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 1920
+        },
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "KO"
+          ],
+          "transfers": 0,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 2280
+        },
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "KO"
+          ],
+          "transfers": 0,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 2880
+        }
+      ]
+    },
+    {
+      "name": "Ikebukuro–Nerima",
+      "at": "2026-10-20T14:38:27.958Z",
+      "http": 200,
+      "status": "ROUTES_RETURNED",
+      "routes": [
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "SI"
+          ],
+          "transfers": 0,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 1200
+        },
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "20042851"
+          ],
+          "transfers": 0,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 1860
+        },
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "WAIT",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "SI",
+            "2193131"
+          ],
+          "transfers": 1,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 1860
+        }
+      ]
+    },
+    {
+      "name": "Ueno–Oshiage",
+      "at": "2026-10-20T14:38:28.472Z",
+      "http": 200,
+      "status": "ROUTES_RETURNED",
+      "routes": [
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "WAIT",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "G",
+            "20209661",
+            "5297561"
+          ],
+          "transfers": 2,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 1920
+        },
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "WAIT",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "3773701",
+            "715041"
+          ],
+          "transfers": 1,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 2340
+        }
+      ]
+    },
+    {
+      "name": "Meguro–Sengakuji",
+      "at": "2026-10-20T14:38:28.918Z",
+      "http": 200,
+      "status": "ROUTES_RETURNED",
+      "routes": [
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "JY",
+            "JY"
+          ],
+          "transfers": 0,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 1440
+        },
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "JY",
+            "A"
+          ],
+          "transfers": 1,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 960
+        },
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "三田線",
+            "669921"
+          ],
+          "transfers": 1,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 1380
+        }
+      ]
+    },
+    {
+      "name": "Shimokitazawa–Oshiage",
+      "at": "2026-10-20T14:38:29.681Z",
+      "http": 200,
+      "status": "ROUTES_RETURNED",
+      "routes": [
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "IN",
+            "925421",
+            "9484051",
+            "JC",
+            "JB",
+            "Z"
+          ],
+          "transfers": 5,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 3300
+        },
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "402101",
+            "7981411",
+            "923691",
+            "Z"
+          ],
+          "transfers": 3,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 3600
+        },
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "WAIT",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "402101",
+            "20209831",
+            "Z"
+          ],
+          "transfers": 2,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 3960
+        }
+      ]
+    },
+    {
+      "name": "Jiyugaoka–ShinKiba",
+      "at": "2026-10-20T14:38:30.098Z",
+      "http": 200,
+      "status": "ROUTES_RETURNED",
+      "routes": [
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "WAIT",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "OM",
+            "R"
+          ],
+          "transfers": 1,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 2520
+        },
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "WAIT",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "OM",
+            "R"
+          ],
+          "transfers": 1,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 2820
+        },
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "WAIT",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "OM",
+            "R"
+          ],
+          "transfers": 1,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 3180
+        }
+      ]
+    },
+    {
+      "name": "Toshimaen–HanedaTerminal3",
+      "at": "2026-10-20T14:38:30.889Z",
+      "http": 200,
+      "status": "ROUTES_RETURNED",
+      "routes": [
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "WAIT",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "E",
+            "アクセス特急（成田空港―押上）%0aエアポート快特（押上―泉岳寺）%0a（泉岳寺―羽田空港第１・第２ターミナル）"
+          ],
+          "transfers": 1,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 4560
+        },
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "WAIT",
+            "RIDE",
+            "TRANSFER",
+            "WAIT",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "E",
+            "9937801",
+            "2022481"
+          ],
+          "transfers": 2,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 4080
+        },
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "E",
+            "2022471"
+          ],
+          "transfers": 1,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 4680
+        }
+      ]
+    }
+  ]
+}

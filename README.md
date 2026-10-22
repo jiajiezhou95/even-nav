@@ -6,7 +6,7 @@ Personal Beta navigation for Even Realities G2. Paste a Google Maps place or dir
 
 - TypeScript, official Even Hub SDK, Vite phone UI.
 - Google BYOK Routes WALK/DRIVE and Map Tiles; Static Maps disabled.
-- Transitous door-to-door rail adapter with arbitrary legs and explicit underground confirmations.
+- Transitous door-to-door bus and rail adapter with mixed transfers and location-aware boarding/alighting confirmation.
 - Authenticated personal Cloudflare Worker; durable atomic request caps.
 - Share-source provenance retained; no private itinerary history by default.
 

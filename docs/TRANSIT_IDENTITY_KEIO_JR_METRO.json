@@ -1,0 +1,112 @@
+{
+  "evidence": "LIVE_PROVIDER_DEPLOYED_WORKER",
+  "departureTime": "2026-10-21T09:00:00+09:00",
+  "calls": 1,
+  "plannedCalls": 1,
+  "stoppedEarly": false,
+  "results": [
+    {
+      "name": "Shimokitazawa–Oshiage",
+      "at": "2026-10-20T14:39:38.739Z",
+      "http": 200,
+      "status": "ROUTES_RETURNED",
+      "routes": [
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "京王井の頭線 Keiō Inokashira Line",
+            "925421",
+            "9484051",
+            "JR中央線快速 JR Chūō Rapid Line",
+            "JR中央・総武緩行線 JR Chūō-Sobu Local Line",
+            "東京メトロ半蔵門線 Tokyo Metro Hanzōmon Line"
+          ],
+          "agencies": [
+            "京王電鉄 Keio Corporation",
+            "京王電鉄",
+            "JR",
+            "JR東日本 JR East",
+            "JR東日本 JR East",
+            "東京メトロ Tokyo Metro"
+          ],
+          "transfers": 5,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 3300
+        },
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "402101",
+            "7981411",
+            "923691",
+            "東京メトロ半蔵門線 Tokyo Metro Hanzōmon Line"
+          ],
+          "agencies": [
+            "京王電鉄",
+            "小田急電鉄",
+            "京王電鉄",
+            "東京メトロ Tokyo Metro"
+          ],
+          "transfers": 3,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 3600
+        },
+        {
+          "modes": [
+            "WAIT",
+            "WALK",
+            "RIDE",
+            "TRANSFER",
+            "RIDE",
+            "TRANSFER",
+            "WAIT",
+            "RIDE",
+            "WALK"
+          ],
+          "lines": [
+            "402101",
+            "20209831",
+            "東京メトロ半蔵門線 Tokyo Metro Hanzōmon Line"
+          ],
+          "agencies": [
+            "京王電鉄",
+            "東京メトロ",
+            "東京メトロ Tokyo Metro"
+          ],
+          "transfers": 2,
+          "chronology": true,
+          "positiveWalksHaveStepsAndGeometry": true,
+          "durationSeconds": 3960
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+.local/
+*.local.json
+EVEN_G2_PRIVATE_LINK_FIXTURES.local.json
+.env*
+!.env.example
+node_modules/
+dist/
+artifacts/
+coverage/
+test-results/
+playwright-report/
+*.log
+deskhear/
+.attribution-source/

@@ -1,0 +1,29 @@
+{
+  "evidence": "LIVE_PROVIDER_DEPLOYED_WORKER",
+  "at": "2026-10-20T14:58:19.942Z",
+  "results": [
+    {
+      "name": "GEOCODING",
+      "http": 200,
+      "status": "PASS",
+      "candidateCount": 1
+    },
+    {
+      "name": "SESSION",
+      "http": 200,
+      "status": "PASS"
+    },
+    {
+      "name": "TILE",
+      "http": 200,
+      "status": "PASS",
+      "imageBytes": 22325
+    },
+    {
+      "name": "VIEWPORT",
+      "http": 200,
+      "status": "PASS",
+      "copyrightPresent": true
+    }
+  ]
+}

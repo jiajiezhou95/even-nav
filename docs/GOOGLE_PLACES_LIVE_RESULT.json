@@ -1,0 +1,9 @@
+{
+  "evidence": "LIVE_PROVIDER_DEPLOYED_WORKER",
+  "at": "2026-10-20T14:58:34.007Z",
+  "api": "PLACES_TEXT_SEARCH",
+  "http": 200,
+  "status": "PASS",
+  "candidateCount": 3,
+  "calls": 1
+}

@@ -1,0 +1,32 @@
+{
+  "evidence": "LIVE_PROVIDER_DEPLOYED_WORKER",
+  "at": "2026-10-20T14:54:49.828Z",
+  "results": [
+    {
+      "name": "WALK",
+      "http": 200,
+      "status": "PASS",
+      "routeCount": 3,
+      "geometryPoints": [
+        195,
+        178,
+        164
+      ]
+    },
+    {
+      "name": "DRIVE",
+      "http": 200,
+      "status": "PASS",
+      "routeCount": 1,
+      "geometryPoints": [
+        75
+      ]
+    },
+    {
+      "name": "GEOCODING",
+      "http": 502,
+      "status": "FAIL",
+      "error": "PROVIDER_UNAVAILABLE"
+    }
+  ]
+}

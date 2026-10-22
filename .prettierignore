@@ -1,0 +1,8 @@
+node_modules/
+.local/
+deskhear/
+.attribution-source/
+apps/even-nav/public/attribution/
+dist/
+artifacts/
+package-lock.json
