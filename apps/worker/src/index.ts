@@ -1,7 +1,8 @@
 import { enrichNavitime } from "../../../packages/providers/src/navitime";
+import { supplementChiibus } from "./chiibus-worker";
 import { z } from "zod";
 import { authenticate, pairDevice, revokeDevice } from "./auth";
-import { NavError } from "../../../packages/contracts/src/index";
+import { NavError, type Route } from "../../../packages/contracts/src/index";
 import {
   ProviderError,
   boundedJson,
@@ -222,6 +223,7 @@ export function createWorker(fetcher: Fetcher = fetch) {
             if (u.pathname.endsWith("transit") !== (t.mode === "TRANSIT"))
               throw new NavError("INVALID_INPUT", "模式与接口不一致");
             if (t.mode === "TRANSIT") {
+              const deadline = Date.now() + 13000;
               if (env.TRANSITOUS_ENABLED !== "true" || !env.TRANSITOUS_CONTACT)
                 throw new NavError(
                   "CONFIG_MISSING",
@@ -230,9 +232,9 @@ export function createWorker(fetcher: Fetcher = fetch) {
               if (t.basemapProvider === "GOOGLE_TILES")
                 configured(env.GOOGLE_API_KEY);
               await reserve(env.QUOTA, "TRANSIT");
-              result = json({
-                requestVersion: t.requestVersion,
-                routes: await enrichNavitime(
+              let baseline: Route[];
+              try {
+                baseline = await enrichNavitime(
                   await transitRoutes(
                     t,
                     `EvenNav/0.1.0 (${env.TRANSITOUS_CONTACT})`,
@@ -241,7 +243,24 @@ export function createWorker(fetcher: Fetcher = fetch) {
                   env.NAVITIME_RAPIDAPI_KEY,
                   () => reserve(env.QUOTA, "NAVITIME_TRANSPORT"),
                   fetcher,
-                ),
+                );
+              } catch (error) {
+                if (!(error instanceof NavError) || error.code !== "NO_ROUTE")
+                  throw error;
+                baseline = [];
+              }
+              const routes = await supplementChiibus(
+                t,
+                baseline,
+                env,
+                fetcher,
+                deadline,
+              );
+              if (!routes.length)
+                throw new NavError("NO_ROUTE", "没有可用公共交通路线");
+              result = json({
+                requestVersion: t.requestVersion,
+                routes,
               });
             } else {
               const key = configured(env.GOOGLE_API_KEY);

@@ -58,3 +58,7 @@ Private Beta0.1.25 adds entry/exit recommendations to active phone/G2 guidance a
 ## Bus routing — 2026-10-22
 
 0.1.27 removes the rail-only provider restriction and preserves BUS/RAIL identity in shared guidance. Provider/contracts and UI implemented in isolated parallel ownership; root reviews, deploys and verifies. Two fresh deployed public Tokyo queries returned bus-only and rail+bus itineraries. See docs/BUS_ACCEPTANCE.md. No coach/ferry expansion or paid upgrade; hardware bus journey acceptance remains pending.
+
+## Chiibus coverage repair — 2026-10-22
+
+0.1.28 supplements missing 赤坂/青山 lines from official operator GTFS with actual Google walking connections. Provider, Worker and mock UI acceptance used isolated parallel ownership; root diagnosed two live integration failures and verified the final deployed private OD returns both lines. 549 tests/type/format/build/privacy and focused browser flow PASS. Exact-head CI and private Beta delivery tracked separately; no actual bus/G2/lockscreen claim. See docs/BUS_ACCEPTANCE.md.

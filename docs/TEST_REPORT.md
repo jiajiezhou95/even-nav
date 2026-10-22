@@ -1,3 +1,10 @@
+### Beta 0.1.28 — official Chiibus routes (2026-10-22)
+
+- Adds official 赤坂/青山 GTFS timetable/path candidates with real Google walking connections, preserves baseline rail options and uses existing bus navigation/countdown. No new UI layout or device protocol changes.
+- Final deployed Worker `40c9faef-3685-438b-b9c9-4238670831f0`: reported private OD returned both bus lines plus rail, valid times and real walking steps, HTTP 200 in 3.8 seconds. Two diagnosed integration failures repaired and retained; see BUS_ACCEPTANCE.md for costs, scope and limitations.
+- 549 unit tests, typecheck, formatting, build and privacy152files PASS. Focused mock HTTP/GPS Chiibus browser flow PASS. Native G2/actual bus/lockscreen NOT RUN.
+- Candidate0.1.28:91930bytes,SHA256 `c8c2310ee1e2f472ad18611c7ffc467a2574da707897db55bc6c3ca30abcfa38`. Official download verification, exact-head CI and private channel readback are separate release gates. No public release or merge.
+
 ### Beta 0.1.27 — bus and mixed transit (2026-10-22)
 
 - Root cause: rail-only query modes and result filtering. BUS is now accepted throughout provider normalization, wait/ride state and shared phone/G2 text. Numeric bus lines remain visible; rail numeric IDs stay hidden. Bus stops skip train-only NAVITIME enrichment, station gateway prompts and rail platform wording. Automatic route replacement compares vehicle type before silently resuming.

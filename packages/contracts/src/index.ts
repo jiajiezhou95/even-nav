@@ -117,7 +117,7 @@ export interface RouteLeg {
 export interface Route {
   navitime?: NavitimeStatus;
   id: string;
-  provider: "GOOGLE_ROUTES" | "TRANSITOUS" | "ORS";
+  provider: "GOOGLE_ROUTES" | "TRANSITOUS" | "ORS" | "CHIIBUS_GTFS";
   basemapProvider: "GOOGLE_TILES" | "OPEN_MAP";
   fetchedAt: string;
   expiresAt: string;

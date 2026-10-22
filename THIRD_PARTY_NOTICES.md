@@ -1,5 +1,8 @@
 # Third-party notices
 
+- 港区ちぃばす timetable, stop and vehicle path data: 株式会社フジエクスプレス / 富士急行バス, published as GTFS-JP open data at https://bus.fujikyu.co.jp/rosen/gtfs/ and linked by the Minato City open-data catalogue. Timetable availability does not imply realtime delays. Source data retains its attribution and is not relicensed by the application's MIT license.
+- `fflate` 0.8.3 — MIT, copyright Arjun Barrett; used only by the Worker to decode the official GTFS archive. Installed LICENSE governs.
+
 - Optional NAVITIME Transport data belongs to NAVITIME JAPAN and its licensors. The owner confirmed personal-use authorization; this does not grant public redistribution rights or additional API subscription capabilities. See `docs/NAVITIME_SETUP.md`.
 
 - `@evenrealities/even_hub_sdk` 0.0.16 — MIT, copyright its authors; installed LICENSE governs.
