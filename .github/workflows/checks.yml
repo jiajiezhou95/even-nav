@@ -16,7 +16,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck && npm test && npm run build
-      - run: npx playwright install --with-deps chromium
+      - name: Install Chromium dependencies
+        run: |
+          # Avoid per-package HTTP timeouts from the hosted runner's Azure mirror.
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+            if [ -f "$source" ]; then
+              sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$source"
+            fi
+          done
+          npx playwright install --with-deps chromium
       - run: npm run test:ui
       - run: npm run replay
       - run: npm run privacy:check
