@@ -50,3 +50,7 @@ Fixed 10 public addresses: provider-backed line/access acceptance 10/10, phone/G
 ## Live access guidance — 2026-10-22
 
 Private Beta0.1.25 adds entry/exit recommendations to active phone/G2 guidance and omits missing-data placeholders. Provider/route/state logic unchanged. Unit, retained-response browser and canvas verification are in docs/TEST_REPORT.md; official channel/readback and final CI remain distinct from hardware acceptance.
+
+## Automatic off-route correction — 2026-10-22
+
+0.1.26 replaces manual-only deviation handling with latest-position rerouting and confirmed reverse-walking correction. Independent core/UI owners integrated by root; root caught and repaired sparse-fix forward-matching regression. 511 unit tests, five synthetic GPS/mock HTTP browser flows, type/format/build/privacy checks PASS. No new live provider calls or Worker changes. Exact-head CI and private channel promotion tracked separately; real walking/G2/lockscreen acceptance remains pending.

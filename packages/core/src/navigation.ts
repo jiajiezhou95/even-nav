@@ -38,6 +38,8 @@ export interface NavigationState {
   location?: LocationFix;
   locationStale: boolean;
   offRoute: boolean;
+  /** Confirmed walking against the route; distinct from leaving its geometry. */
+  wrongWay?: boolean;
   replanNeeded: boolean;
   paused: boolean;
   boarded: boolean;
@@ -106,6 +108,7 @@ export class NavigationSession {
     stepRemainingMeters: 0,
     locationStale: true,
     offRoute: false,
+    wrongWay: false,
     replanNeeded: false,
     paused: false,
     boarded: false,
@@ -113,6 +116,13 @@ export class NavigationSession {
   private controller = new AbortController();
   private origin?: Coordinate;
   private farSamples = 0;
+  private farSince = 0;
+  private lastDeviationFix = 0;
+  private backwardSince = 0;
+  private backwardSamples = 0;
+  private wrongWayAnchor = 0;
+  private forwardSince = 0;
+  private forwardSamples = 0;
   private lastReplan = -Infinity;
   private missedDeparture = false;
   private offRouteReplanNeeded = false;
@@ -241,11 +251,12 @@ export class NavigationSession {
       location: structuredClone(fix),
       locationStale: false,
       offRoute: false,
+      wrongWay: false,
       replanNeeded: false,
       paused: false,
       boarded: false,
     };
-    this.farSamples = 0;
+    this.resetMotionEvidence();
     this.lastReplan = -Infinity;
     this.missedDeparture = false;
     this.offRouteReplanNeeded = false;
@@ -299,12 +310,17 @@ export class NavigationSession {
       !this.validFix(fix, now)
     ) {
       this.transitSamples = [];
+      this.resetMotionEvidence();
       return false;
     }
     const previous = this.state.location;
     if (previous && fix.timestamp <= previous.timestamp) return false;
     const dt = previous ? (fix.timestamp - previous.timestamp) / 1000 : 0;
     let leg = this.state.route!.legs[this.state.legIndex];
+    if (fix.timestamp > now && leg.mode !== "RIDE" && leg.mode !== "WAIT") {
+      this.resetMotionEvidence();
+      return false;
+    }
     const maxSpeed = leg.mode === "WALK" || leg.mode === "TRANSFER" ? 12 : 100;
     if (
       previous &&
@@ -312,6 +328,7 @@ export class NavigationSession {
       distanceMeters(previous.coordinate, fix.coordinate) > maxSpeed * dt + 100
     ) {
       this.transitSamples = [];
+      this.resetMotionEvidence();
       return false;
     }
     this.state.location = structuredClone(fix);
@@ -368,32 +385,101 @@ export class NavigationSession {
       }
       return true;
     }
+    const walking = leg.mode === "WALK" || leg.mode === "TRANSFER";
+    const matchWindow = walking
+      ? Math.max(60, Math.min(150, maxSpeed * dt + 30))
+      : Math.max(150, maxSpeed * dt + 50);
     const match = matchGeometry(
       fix.coordinate,
       leg.geometry,
-      Math.max(0, this.state.progressMeters - 30),
+      Math.max(0, this.state.progressMeters - matchWindow),
+      // Sparse but valid updates can cover more than 150 m. Keep the original
+      // speed/time forward bound; only the new reverse search has a fixed cap.
       this.state.progressMeters + Math.max(150, maxSpeed * dt + 50),
     );
-    const far = !match || match.distanceMeters > this.config.offRouteMeters;
-    this.farSamples = far
-      ? this.farSamples + 1
-      : match.distanceMeters < this.config.offRouteMeters * 0.6
-        ? 0
-        : this.farSamples;
-    this.state.offRoute = this.farSamples >= this.config.offRouteSamples;
-    if (
-      this.state.offRoute &&
-      now - this.lastReplan >= this.config.replanCooldownMs
-    ) {
-      this.state.replanNeeded = true;
-      this.offRouteReplanNeeded = true;
-      this.lastReplan = now;
+    const reliable =
+      now - fix.timestamp <= 5000 &&
+      fix.accuracyMeters !== undefined &&
+      fix.accuracyMeters <= 25;
+    const threshold = !reliable
+      ? this.config.offRouteMeters
+      : Math.max(
+          walking
+            ? Math.min(30, this.config.offRouteMeters)
+            : this.config.offRouteMeters,
+          2 * (fix.accuracyMeters ?? this.config.maxAccuracyMeters),
+        );
+    const far = !match || match.distanceMeters > threshold;
+    if (!reliable) {
+      this.resetMotionEvidence();
+    } else {
+      if (fix.timestamp - this.lastDeviationFix > this.config.staleMs)
+        this.resetMotionEvidence();
+      this.lastDeviationFix = fix.timestamp;
+      if (far) {
+        if (!this.farSamples) this.farSince = fix.timestamp;
+        this.farSamples++;
+        if (
+          this.farSamples >= this.config.offRouteSamples &&
+          fix.timestamp - this.farSince >= 4000
+        )
+          this.state.offRoute = true;
+      } else if (match.distanceMeters < threshold * 0.6) {
+        this.farSamples = 0;
+        this.state.offRoute = false;
+        this.offRouteReplanNeeded = false;
+        this.state.replanNeeded = this.missedDeparture;
+      }
+      if (
+        this.state.offRoute &&
+        now - this.lastReplan >= this.config.replanCooldownMs
+      ) {
+        this.state.replanNeeded = true;
+        this.offRouteReplanNeeded = true;
+        this.lastReplan = now;
+      }
     }
-    if (far || !match) return true;
-    this.state.progressMeters = Math.max(
-      this.state.progressMeters,
-      match.alongMeters,
-    );
+    if (far || !match) {
+      this.backwardSamples = 0;
+      this.forwardSamples = 0;
+      return true;
+    }
+    const jitterMeters = Math.max(12, 2 * fix.accuracyMeters!);
+    if (reliable && this.state.wrongWay) {
+      this.wrongWayAnchor = Math.min(this.wrongWayAnchor, match.alongMeters);
+      if (match.alongMeters - this.wrongWayAnchor > jitterMeters) {
+        if (!this.forwardSamples) this.forwardSince = fix.timestamp;
+        this.forwardSamples++;
+        if (
+          this.forwardSamples >= 2 &&
+          fix.timestamp - this.forwardSince >= 2000
+        )
+          this.state.wrongWay = false;
+      } else this.forwardSamples = 0;
+    }
+    const backward =
+      reliable &&
+      walking &&
+      this.state.progressMeters - match.alongMeters > jitterMeters;
+    if (backward) {
+      if (!this.backwardSamples) this.backwardSince = fix.timestamp;
+      this.backwardSamples++;
+      if (
+        this.backwardSamples >= 2 &&
+        fix.timestamp - this.backwardSince >= 2000
+      ) {
+        this.state.progressMeters = match.alongMeters;
+        this.state.wrongWay = true;
+        this.wrongWayAnchor = match.alongMeters;
+        this.forwardSamples = 0;
+      }
+    } else {
+      this.backwardSamples = 0;
+      this.state.progressMeters = Math.max(
+        this.state.progressMeters,
+        match.alongMeters,
+      );
+    }
     let cumulative = 0;
     this.state.stepIndex = 0;
     for (let i = 0; i < leg.steps.length; i++) {
@@ -435,8 +521,11 @@ export class NavigationSession {
     this.state.stepRemainingMeters = firstStepMeters(
       this.state.route!.legs[this.state.legIndex],
     );
-    this.farSamples = 0;
+    this.resetMotionEvidence();
     this.state.offRoute = false;
+    this.state.wrongWay = false;
+    this.offRouteReplanNeeded = false;
+    this.state.replanNeeded = this.missedDeparture;
     this.resetTransitEvidence();
     if (this.state.location && this.state.location.timestamp <= this.clockNow)
       this.transitSamples = [structuredClone(this.state.location)];
@@ -476,6 +565,14 @@ export class NavigationSession {
     this.promptCount = 0;
     this.nextPromptAt = 0;
     delete this.state.transitPrompt;
+  }
+  private resetMotionEvidence(): void {
+    this.farSamples = 0;
+    this.farSince = 0;
+    this.lastDeviationFix = 0;
+    this.backwardSamples = 0;
+    this.backwardSince = 0;
+    this.forwardSamples = 0;
   }
   private updateTransitPrompt(now: number): void {
     const action = availableTransitAction(this.state);
@@ -529,6 +626,7 @@ export class NavigationSession {
   pause(): void {
     if (this.state.phase === "NAVIGATING") {
       this.state.paused = true;
+      this.resetMotionEvidence();
       this.resetTransitEvidence();
     }
   }

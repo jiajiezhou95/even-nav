@@ -393,3 +393,20 @@ describe("compact structured navigation guidance", () => {
     expect(conciseInstruction(state, "WALK", now)).toMatch(/^沿路线前行/);
   });
 });
+
+it("off-route and wrong-way hide stale turn, distance, exit recommendation and ETA", () => {
+  const state = accessState();
+  state.offRoute = true;
+  const view = guidanceView(state, "TRANSIT", now);
+  expect(view).toEqual({ action: "偏离路线", icon: "none", stale: false });
+  expect(currentStepDetail(state)).toBe("");
+  expect(estimatedArrival(state, "TRANSIT", now)).toBeUndefined();
+  expect(hudStatus(state, "TRANSIT", now)).not.toContain("总剩余");
+  state.offRoute = false;
+  state.wrongWay = true;
+  expect(guidanceView(state, "TRANSIT", now)).toEqual({
+    action: "请掉头，沿路线前进",
+    icon: "uturn",
+    stale: false,
+  });
+});

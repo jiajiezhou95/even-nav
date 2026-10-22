@@ -1,3 +1,12 @@
+### Beta 0.1.26 — automatic off-route correction (2026-10-22)
+
+- Confirmed walking/transfer/driving deviation now requests a replacement itinerary from the latest reliable fix. Walking requires multiple distinct accurate fixes over at least four seconds, with accuracy-scaled distance threshold. Confirmed backward walking rewinds progress and displays a U-turn; normal forward matching still tolerates sparse accepted fixes. Train/WAIT phases do not use road deviation detection.
+- One automatic request at a time; at most three attempts per deviation episode, retries after 60 seconds and a newer fix moved 10 metres. Quota/auth/config failures stop retries. Pause/end/version changes, stale GPS, return to route and movement more than 50 metres from request origin reject late results. Invalid replacement routes preserve the current journey.
+- Road replacements resume automatically. Transit replacements with the same remaining rides resume; changed rides require phone/G2 confirmation. Off-route display suppresses obsolete turn/distance/access cues and immediately updates retained-map guidance before map tiles return. Existing B layout and native image transport unchanged.
+- Final local unit suite511/511 PASS, five Chromium app flows PASS with synthetic GPS through the real navigation core and mocked HTTP/native boundary; TypeScript, full formatting, package build and privacy144files PASS. Root full-suite review caught the sparse-fix match-window regression and repaired it before packaging. Exact-head CI is a separate release gate.
+- Zero live routing/map/NAVITIME requests for this delta; existing provider integration evidence reused. Actual walking reroute, native G2 image delivery and lockscreen behavior NOT RUN; browser PASS is not hardware PASS.
+- Private candidate0.1.26 build118397,95209bytes,SHA256 e0d903b7ae7ebfec926b08f9240ec11d7ddf087fe81a2dbd339567a8b69d3803. Official download hash and channel readback are checked separately before handoff. No Worker deployment, public store release or merge.
+
 ### Beta 0.1.25 — live station access guidance (2026-10-22)
 
 - Phone and G2 live guidance now show selected entrances when approaching/waiting, selected exits after alighting, and both endpoints during transfer walking. Only already-selected provider-backed recommendations are used; no new routing geometry, GPS distance to gateway, or indoor-exit completion is invented. The exit remains visible for its walking segment. Onboard/through-service/paused/non-navigation states suppress inappropriate entry/exit cues.

@@ -72,7 +72,15 @@ export function stationAccessGuidance(
 ): string | undefined {
   const legs = state.route?.legs;
   const leg = legs?.[state.legIndex];
-  if (!legs || !leg || state.phase !== "NAVIGATING" || state.paused) return;
+  if (
+    !legs ||
+    !leg ||
+    state.phase !== "NAVIGATING" ||
+    state.paused ||
+    state.offRoute ||
+    state.wrongWay
+  )
+    return;
   const adjacentRide = (direction: -1 | 1): RouteLeg | undefined => {
     for (
       let index = state.legIndex + direction;
@@ -121,6 +129,7 @@ export function stationAccessGuidance(
 }
 
 export function transitPhaseDetail(state: NavigationState): string {
+  if (state.offRoute || state.wrongWay) return "";
   const leg = state.route?.legs[state.legIndex];
   if (!leg) return "";
   if (
@@ -185,6 +194,8 @@ export function guidanceView(
   if (state.phase === "ARRIVED") return plain("已到达目的地附近");
   if (state.phase === "ENDED") return plain("导航已结束");
   if (state.paused) return plain("导航已暂停");
+  if (state.offRoute) return plain("偏离路线");
+  if (state.wrongWay) return { ...plain("请掉头，沿路线前进"), icon: "uturn" };
   const leg = state.route?.legs[state.legIndex];
   const stale =
     state.phase === "NAVIGATING" &&
@@ -296,6 +307,7 @@ export function conciseInstruction(
 }
 
 export function currentStepDetail(state: NavigationState): string {
+  if (state.offRoute || state.wrongWay) return "";
   return (
     state.route?.legs[state.legIndex]?.steps[state.stepIndex]?.instruction ||
     transitPhaseDetail(state)
@@ -310,6 +322,8 @@ export function estimatedArrival(
 ): number | undefined {
   if (
     state.paused ||
+    state.offRoute ||
+    state.wrongWay ||
     state.phase !== "NAVIGATING" ||
     !state.route ||
     !Number.isFinite(now)
@@ -413,7 +427,7 @@ export function hudStatus(
   mode: Mode,
   now = Date.now(),
 ): string {
-  const meters = state.remainingMeters;
+  const meters = state.offRoute ? NaN : state.remainingMeters;
   const distance =
     !Number.isFinite(meters) || meters < 0
       ? ""
@@ -437,7 +451,10 @@ export function hudStatus(
     .filter(Boolean)
     .join("\n")
     .trim();
-  const departure = mode === "TRANSIT" ? departureText(state, now, true) : "";
+  const departure =
+    mode === "TRANSIT" && !state.offRoute
+      ? departureText(state, now, true)
+      : "";
   const withDeparture = departure
     ? `${departure}\n${status.replace("\n", "  ")}`
     : status;

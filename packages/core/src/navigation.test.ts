@@ -315,7 +315,7 @@ describe("current step remaining distance", () => {
 });
 
 describe("door-to-door transit replay", () => {
-  it("clearing a missed departure preserves an earlier off-route replan request", () => {
+  it("returning to the route clears deviation while missed departure stays independently actionable", () => {
     const s = running(
       route([
         leg("WALK"),
@@ -330,9 +330,9 @@ describe("door-to-door transit replay", () => {
     expect(s.snapshot.replanNeeded).toBe(true);
     s.refreshHealth(now + 41000);
     s.confirmTransit("BOARDED");
-    expect(s.snapshot.replanNeeded).toBe(true);
+    expect(s.snapshot.replanNeeded).toBe(false);
     s.refreshHealth(now + 42000);
-    expect(s.snapshot.replanNeeded).toBe(true);
+    expect(s.snapshot.replanNeeded).toBe(false);
   });
   it("rejects missing runtime confirmation without advancing a walking leg", () => {
     const s = running();
@@ -456,5 +456,138 @@ describe("door-to-door transit replay", () => {
     s.confirmTransit("TRANSFER_COMPLETED");
     expect(s.snapshot.progressMeters).toBe(0);
     expect(s.snapshot.remainingMeters).toBe(111);
+  });
+});
+
+describe("live deviation and backtracking", () => {
+  it.each([undefined, 35])(
+    "retains normal forward progress with accepted accuracy %s",
+    (accuracyMeters) => {
+      const s = running();
+      const before = s.snapshot.stepRemainingMeters;
+      for (const seconds of [10, 12, 14])
+        s.updateLocation(
+          { ...fix(seconds, 10.0004), accuracyMeters },
+          now + seconds * 1000,
+        );
+      expect(s.snapshot.progressMeters).toBeGreaterThan(40);
+      expect(s.snapshot.stepRemainingMeters).toBeLessThan(before);
+      expect(s.snapshot.offRoute).toBe(false);
+      expect(s.snapshot.wrongWay).toBe(false);
+      expect(s.snapshot.replanNeeded).toBe(false);
+    },
+  );
+  it.each(["WALK", "TRANSFER", "DRIVE"] as const)(
+    "confirms %s deviation and clears it on recovery",
+    (mode) => {
+      const s = running(route([leg(mode)]));
+      for (const seconds of [10, 12, 14])
+        s.updateLocation(fix(seconds, 10, 20.001), now + seconds * 1000);
+      expect(s.snapshot.offRoute).toBe(true);
+      expect(s.snapshot.replanNeeded).toBe(true);
+      s.updateLocation(fix(25, 10.0002), now + 25000);
+      expect(s.snapshot.offRoute).toBe(false);
+      expect(s.snapshot.replanNeeded).toBe(false);
+    },
+  );
+  it("requires elapsed time and distinct timestamps, not callback volume", () => {
+    const s = running();
+    for (const seconds of [10, 10, 10, 10.1, 10.2])
+      s.updateLocation(fix(seconds, 10, 20.001), now + seconds * 1000);
+    expect(s.snapshot.offRoute).toBe(false);
+    s.updateLocation(fix(14, 10, 20.001), now + 14000);
+    expect(s.snapshot.offRoute).toBe(true);
+  });
+  it.each(["future", "stale", "poor", "unknown", "jump"])(
+    "does not count %s fixes as deviation evidence",
+    (kind) => {
+      const s = running();
+      for (const seconds of [10, 12, 14]) {
+        const f = fix(seconds, 10, 20.001);
+        if (kind === "future") f.timestamp += 1000;
+        if (kind === "stale") f.timestamp -= 6000;
+        if (kind === "poor") f.accuracyMeters = 40;
+        if (kind === "unknown") delete f.accuracyMeters;
+        if (kind === "jump") f.coordinate.lng = 21;
+        s.updateLocation(f, now + seconds * 1000);
+      }
+      expect(s.snapshot.offRoute).toBe(false);
+      expect(s.snapshot.replanNeeded).toBe(false);
+    },
+  );
+  it("does not combine evidence across unreliable samples", () => {
+    const s = running();
+    for (const seconds of [10, 12])
+      s.updateLocation(fix(seconds, 10, 20.001), now + seconds * 1000);
+    s.updateLocation(
+      { ...fix(13, 10, 20.001), accuracyMeters: 40 },
+      now + 13000,
+    );
+    s.updateLocation(fix(14, 10, 20.001), now + 14000);
+    expect(s.snapshot.offRoute).toBe(false);
+  });
+  it("accounts for accuracy before classifying a parallel street", () => {
+    const s = running();
+    for (const seconds of [10, 12, 14])
+      s.updateLocation(
+        { ...fix(seconds, 10, 20.00035), accuracyMeters: 25 },
+        now + seconds * 1000,
+      );
+    expect(s.snapshot.offRoute).toBe(false);
+  });
+  it.each(["RIDE", "WAIT"] as const)(
+    "never treats %s rail fixes as walking deviation",
+    (mode) => {
+      const s = running(route([leg(mode)]));
+      for (const seconds of [10, 12, 14])
+        s.updateLocation(fix(seconds, 10, 20.001), now + seconds * 1000);
+      expect(s.snapshot.offRoute).toBe(false);
+    },
+  );
+  it("rewinds step and distance after sustained on-route backtracking", () => {
+    const l = leg();
+    l.steps = [
+      { ...l.steps[0], geometry: [origin, { lat: 10.0005, lng: 20 }] },
+      {
+        ...l.steps[0],
+        geometry: [
+          { lat: 10.0005, lng: 20 },
+          { lat: 10.001, lng: 20 },
+        ],
+      },
+    ];
+    const s = running(route([l]));
+    s.updateLocation(fix(10, 10.0007), now + 10000);
+    expect(s.snapshot.stepIndex).toBe(1);
+    const remaining = s.snapshot.remainingMeters;
+    s.updateLocation(fix(20, 10.0004), now + 20000);
+    expect(s.snapshot.stepIndex).toBe(1);
+    expect(s.snapshot.wrongWay).toBe(false);
+    s.updateLocation(fix(22, 10.00035), now + 22000);
+    expect(s.snapshot.stepIndex).toBe(0);
+    expect(s.snapshot.remainingMeters).toBeGreaterThan(remaining);
+    expect(s.snapshot.stepRemainingMeters).toBeCloseTo(16.68, 0);
+    expect(s.snapshot.offRoute).toBe(false);
+    expect(s.snapshot.wrongWay).toBe(true);
+    s.updateLocation({ ...fix(23, 10.0006), accuracyMeters: 35 }, now + 23000);
+    expect(s.snapshot.wrongWay).toBe(true);
+    s.updateLocation(fix(24, 10.0004), now + 24000);
+    expect(s.snapshot.wrongWay).toBe(true);
+    s.updateLocation(fix(26, 10.0005), now + 26000);
+    expect(s.snapshot.wrongWay).toBe(true);
+    s.updateLocation(fix(28, 10.00055), now + 28000);
+    expect(s.snapshot.wrongWay).toBe(false);
+  });
+  it("does not jump to a distant later branch of a loop", () => {
+    const l = leg();
+    l.geometry = [
+      origin,
+      { lat: 10.002, lng: 20 },
+      { lat: 10.002, lng: 20.0001 },
+      { lat: 10, lng: 20.0001 },
+    ];
+    const s = running(route([l]));
+    s.updateLocation(fix(10, 10.0002, 20.0001), now + 10000);
+    expect(s.snapshot.progressMeters).toBeLessThan(30);
   });
 });
