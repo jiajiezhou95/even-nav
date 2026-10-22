@@ -233,20 +233,17 @@ function instruction(state = session.snapshot) {
 }
 function itinerary(route: Route) {
   if (isTransitOverview(route))
-    return (
-      route.legs
-        .map(
-          (leg, index) =>
-            `<li><span class="leg-mode">${index + 1}</span><div>${transitLegOverview(
-              leg,
-            )
-              .split("\n")
-              .map((line) => `<span>${escape(line)}</span>`)
-              .join("")}</div></li>`,
-        )
-        .join("") +
-      '<li class="small muted">未显示的站台或出入口尚未匹配到可靠信息。</li>'
-    );
+    return route.legs
+      .map(
+        (leg, index) =>
+          `<li><span class="leg-mode">${index + 1}</span><div>${transitLegOverview(
+            leg,
+          )
+            .split("\n")
+            .map((line) => `<span>${escape(line)}</span>`)
+            .join("")}</div></li>`,
+      )
+      .join("");
   return route.legs
     .map(
       (
@@ -254,14 +251,17 @@ function itinerary(route: Route) {
       ) => `<li><span class="leg-mode">${escape({ WALK: "步行", DRIVE: "驾驶", WAIT: "候车", RIDE: "乘车", TRANSFER: "换乘" }[leg.mode])}</span>
     <div><strong>${escape(leg.line || leg.to || (leg.mode === "WALK" ? "步行" : leg.mode === "DRIVE" ? "驾驶" : "下一段"))}</strong>${leg.headsign ? `<span>往 ${escape(leg.headsign)}</span>` : ""}<span>${escape([leg.from, leg.to].filter(Boolean).join(" → "))}</span>
     ${leg.steps.length ? `<ol class="itinerary-steps">${leg.steps.map((step) => `<li><span>${escape(step.instruction)}</span><small>${distance(step.distanceMeters)}</small></li>`).join("")}</ol>` : ""}
-    <span>${duration(leg.durationSeconds)}${leg.startTime ? ` · ${time(leg.startTime)}` : ""}${leg.platform ? ` · ${escape(leg.platform)} 站台` : ""}${leg.mode === "RIDE" ? ` · ${leg.realtime ? "含实时数据" : "计划时刻 · 延误未知"}` : ""}${leg.staySeated ? " · 直通无需下车" : ""}</span></div></li>`,
+    <span>${duration(leg.durationSeconds)}${leg.startTime ? ` · ${time(leg.startTime)}` : ""}${leg.platform ? ` · ${escape(leg.platform)} 站台` : ""}${leg.mode === "RIDE" ? ` · ${leg.realtime ? "含实时数据" : "时刻表时间"}` : ""}${leg.staySeated ? " · 直通无需下车" : ""}</span></div></li>`,
     )
     .join("");
 }
 function transitRouteSummary(route: Route) {
   const rides = route.legs.filter((leg) => leg.mode === "RIDE");
   return {
-    lines: rides.map((leg) => transitLineLabel(leg.line)).join(" → "),
+    lines: rides
+      .map((leg) => transitLineLabel(leg.line))
+      .filter(Boolean)
+      .join(" → "),
     transfers: rides.slice(1).filter((leg) => !leg.staySeated).length,
     walking: route.legs
       .filter((leg) => leg.mode === "WALK" || leg.mode === "TRANSFER")
@@ -275,7 +275,7 @@ function glassesCandidateSummary(route: Route) {
 }
 function guidanceMarkup(state = session.snapshot) {
   const view = guidanceView(state, mode);
-  return `<div class="guidance-current"><span id="nav-current-icon" class="maneuver-icon" data-icon="${view.icon}" aria-hidden="true">${maneuverSvg(view.icon)}</span><span><span id="nav-current-text">${escape(view.action)}</span><span id="nav-step-distance" >${escape(view.distance || "")}</span></span></div><div id="nav-next" class="guidance-next" ${view.next ? "" : "hidden"}><span class="next-label">下一步</span><span id="nav-next-icon" class="maneuver-icon" data-icon="${view.nextIcon || "none"}" aria-hidden="true">${maneuverSvg(view.nextIcon || "none")}</span><span id="nav-next-text">${escape(view.next || "")}</span></div>`;
+  return `<div class="guidance-current"><span id="nav-current-icon" class="maneuver-icon" data-icon="${view.icon}" aria-hidden="true">${maneuverSvg(view.icon)}</span><span><span id="nav-current-text">${escape(view.action)}</span><span id="nav-step-distance" >${escape(view.distance || "")}</span></span></div><div id="nav-next" class="guidance-next" ${view.next ? "" : "hidden"}><span class="next-label">下一步</span><span id="nav-next-icon" class="maneuver-icon" data-icon="${view.nextIcon || "none"}" aria-hidden="true">${maneuverSvg(view.nextIcon || "none")}</span><span id="nav-next-text">${escape(view.next || "")}</span></div><p id="nav-access" class="small" ${view.access ? "" : "hidden"}>${escape(view.access || "")}</p>`;
 }
 function updateIcon(selector: string, icon: ManeuverIcon) {
   const element = $(selector);
@@ -290,6 +290,8 @@ function updateNavigationTelemetry(state = session.snapshot) {
   $("#nav-step-distance").textContent = view.distance || "";
   $("#nav-next").hidden = !view.next;
   $("#nav-next-text").textContent = view.next || "";
+  $("#nav-access").hidden = !view.access;
+  $("#nav-access").textContent = view.access || "";
   updateIcon("#nav-current-icon", view.icon);
   updateIcon("#nav-next-icon", view.nextIcon || "none");
   $("#current-step-detail").textContent = currentStepDetail(state);

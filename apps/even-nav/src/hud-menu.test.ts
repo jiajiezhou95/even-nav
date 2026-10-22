@@ -95,6 +95,30 @@ describe("complete route overview text", () => {
     expect(recommendation).not.toContain("A1口");
     expect(recommended.steps).toEqual([]);
   });
+  it("omits missing metadata without dangling separators while keeping schedule provenance", () => {
+    const leg: Route["legs"][number] = {
+      mode: "RIDE",
+      line: "12345",
+      geometry: [],
+      steps: [],
+      distanceMeters: 1000,
+      durationSeconds: 600,
+      startTime: "2026-10-21T01:00:00Z",
+      intermediateStops: [{}, { name: "中途甲站" }],
+    };
+    const text = transitLegOverview(leg);
+    expect(text).toContain("乘车 · 10分钟");
+    expect(text).toContain("出发 10:00");
+    expect(text).toContain("时刻表时间");
+    expect(text).toContain("中途甲站");
+    expect(text).not.toMatch(/12345|待补充|未提供|未知|未命名|无实时|^ ·| ·$/m);
+    expect(
+      transitLegOverview({ ...leg, intermediateStops: undefined }),
+    ).not.toContain("中途站");
+    expect(transitLegOverview({ ...leg, intermediateStops: [] })).not.toContain(
+      "中途停靠站",
+    );
+  });
   it("retains long Chinese and newlines across nine-line full-width pages and packs short steps together", () => {
     const text =
       "前往中央车站东出口，经过地下通道后右转。\n在第二个路口左转，沿人行道继续前行至公交站。".repeat(
@@ -196,7 +220,7 @@ describe("complete route overview text", () => {
     const all = pages.flatMap((p) => p.lines).join("");
     for (let i = 1; i <= 12; i++) expect(all).toContain(`中途站${i}`);
     expect(all).toContain("停靠取消");
-    expect(all).toContain("未显示的站台或出入口尚未匹配到可靠信息");
+    expect(all).not.toContain("未显示的站台或出入口");
     expect(result[3].text).toContain("乙站 → 地铁站");
     const walking = routeOverviewSteps(
       { provider: "GOOGLE_ROUTES", legs: [legs[0]] } as Route,

@@ -7,7 +7,7 @@ import { distanceMeters } from "../../../packages/core/src/geometry";
 
 export function transitLineLabel(line?: string): string {
   const value = line?.normalize("NFKC").trim();
-  return !value || /^\d+$/.test(value) ? "线路名称待补充" : value;
+  return !value || /^\d+$/.test(value) ? "" : value;
 }
 
 function compactTransitLabel(value: string, limit: number): string {
@@ -62,10 +62,16 @@ export function departureText(
     ? `往${leg.headsign.trim()}`
     : leg.toStop?.name || leg.to
       ? `乘至${leg.toStop?.name || leg.to}`
-      : "方向待补充";
-  const service = `下一班 ${compact ? compactTransitLabel(line, 10) : line} · ${compact ? compactTransitLabel(direction, 12) : direction}`;
+      : "";
+  const identity = [
+    compact ? compactTransitLabel(line, 10) : line,
+    compact ? compactTransitLabel(direction, 12) : direction,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const service = `下一班${identity ? ` ${identity}` : ""}`;
   const timing = `${leg.realtime ? "发车" : "时刻表发车"} ${clock} · ${seconds ? `${Math.floor(seconds / 60)}分${String(seconds % 60).padStart(2, "0")}秒` : "已到发车时间"}`;
-  return `${service}\n${timing}${!compact && !leg.realtime ? "（无实时延误数据）" : ""}`;
+  return `${service}\n${timing}`;
 }
 
 function outsideStation(state: NavigationState, now: number) {

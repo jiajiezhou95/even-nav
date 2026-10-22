@@ -73,7 +73,7 @@ describe("real transit departure countdown and rollover", () => {
     expect(phone).toContain(
       "下一班 東京メトロ銀座線 Tokyo Metro Ginza Line · 往浅草 Asakusa",
     );
-    expect(phone).toContain("时刻表发车 09:00 · 0分30秒（无实时延误数据）");
+    expect(phone).toContain("时刻表发车 09:00 · 0分30秒");
     const hud = departureText(s, now, true);
     expect(hud.split("\n")).toEqual([
       "下一班 東京メトロ銀座線 · 往浅草",
@@ -85,11 +85,12 @@ describe("real transit departure countdown and rollover", () => {
     const s = state(),
       leg = s.route!.legs[1];
     leg.line = "２０２１０８６１";
-    expect(transitLineLabel(leg.line)).toBe("线路名称待补充");
-    expect(departureText(s, now)).toContain("下一班 线路名称待补充 · 乘至乙站");
+    expect(transitLineLabel(leg.line)).toBe("");
+    expect(departureText(s, now)).toContain("下一班 乘至乙站");
     expect(departureText(s, now)).not.toContain("往乙站");
     delete leg.to;
-    expect(departureText(s, now)).toContain("方向待补充");
+    expect(departureText(s, now)).toBe("下一班\n时刻表发车 09:00 · 0分30秒");
+    expect(departureText(s, now)).not.toMatch(/待补充|未知|无实时| · \n/);
   });
   it("keeps long Japanese service labels inside one compact HUD line without truncating time", () => {
     const s = state(),

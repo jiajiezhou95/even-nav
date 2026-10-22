@@ -1,4 +1,12 @@
-# Verification checkpoint — 2026-10-20
+### Beta 0.1.25 — live station access guidance (2026-10-22)
+
+- Phone and G2 live guidance now show selected entrances when approaching/waiting, selected exits after alighting, and both endpoints during transfer walking. Only already-selected provider-backed recommendations are used; no new routing geometry, GPS distance to gateway, or indoor-exit completion is invented. The exit remains visible for its walking segment. Onboard/through-service/paused/non-navigation states suppress inappropriate entry/exit cues.
+- Current maneuver, distance and next turn remain visible. G2 uses the existing 64px header and full B map/short native container names; long access labels fit or compact while preserving exit identifiers.
+- Missing line/direction/station/platform/access/delay metadata and unavailable ETA placeholders are omitted. Available schedule times remain marked as schedule-based; location freshness and actionable failures remain visible.
+- 489 unit tests PASS; TypeScript and focused production-canvas browser test PASS. Retained-real-response phone/native-bridge replay PASS, including actual phone recommendation and composed G2 frame. Synthetic basemap/native bridge is not hardware acceptance. No Google, NAVITIME or Transitous request in this UI-only change; previous provider evidence remains valid.
+- Package0.1.25 uploaded private build118376,93541bytes,SHA256 c0e95096fa69a5c098e72bfe84175318494eb99e922e5bd5aaf0e3be9e946f1c. Beta promotion/readback and exact-head CI tracked by official CLI/PR. Worker unchanged; physical G2/lockscreen acceptance not claimed.
+
+ Verification checkpoint — 2026-10-20
 
 ## Ten-address metadata repair (2026-10-21)
 

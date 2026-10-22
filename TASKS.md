@@ -46,3 +46,7 @@ Scope: compact left attribution, real departure countdown and conservative misse
 ## Ten-address metadata acceptance (2026-10-21)
 
 Fixed 10 public addresses: provider-backed line/access acceptance 10/10, phone/G2 browser replay 10/10 PASS. Six initial failures retained and repaired without changing addresses. Backend deployed for private Beta 0.1.24. See docs/TRANSIT_TEN_ADDRESS_ACCEPTANCE.md for live/reused/replay/hardware boundaries. No public release or merge.
+
+## Live access guidance — 2026-10-22
+
+Private Beta0.1.25 adds entry/exit recommendations to active phone/G2 guidance and omits missing-data placeholders. Provider/route/state logic unchanged. Unit, retained-response browser and canvas verification are in docs/TEST_REPORT.md; official channel/readback and final CI remain distinct from hardware acceptance.

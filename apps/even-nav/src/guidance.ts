@@ -2,7 +2,11 @@ import type {
   NavigationState,
   TransitAction,
 } from "../../../packages/core/src/navigation";
-import type { Mode } from "../../../packages/contracts/src/index";
+import type {
+  Mode,
+  RouteLeg,
+  RouteStop,
+} from "../../../packages/contracts/src/index";
 import { staleInstruction } from "./freshness";
 import { geometryLength } from "../../../packages/core/src/geometry";
 import { departureText, transitLineLabel } from "./transit-departure";
@@ -62,6 +66,60 @@ export const transitActionLabels: Record<TransitAction, string> = {
   STAY_SEATED: "确认直通",
 };
 
+/** Use only the selected recommendation on the adjacent ride, never a guessed exit. */
+export function stationAccessGuidance(
+  state: NavigationState,
+): string | undefined {
+  const legs = state.route?.legs;
+  const leg = legs?.[state.legIndex];
+  if (!legs || !leg || state.phase !== "NAVIGATING" || state.paused) return;
+  const adjacentRide = (direction: -1 | 1): RouteLeg | undefined => {
+    for (
+      let index = state.legIndex + direction;
+      index >= 0 && index < legs.length;
+      index += direction
+    ) {
+      const item = legs[index];
+      if (item.mode === "RIDE") return item;
+      if (!["WALK", "TRANSFER", "WAIT"].includes(item.mode)) return;
+    }
+  };
+  const gateway = (
+    stop: RouteStop | undefined,
+    reference: "WALK_ORIGIN" | "WALK_DESTINATION",
+  ) => {
+    const access = stop?.stationAccess;
+    const selected = access?.selectedGateway;
+    return access?.selection === "NEAREST_STRAIGHT_LINE" &&
+      selected?.reference === reference
+      ? selected.name.trim() || undefined
+      : undefined;
+  };
+  if (leg.mode === "RIDE") {
+    if (state.boarded || leg.staySeated) return;
+    const entry = gateway(leg.fromStop, "WALK_ORIGIN");
+    return entry ? `建议入口 ${entry}` : undefined;
+  }
+  if (!["WALK", "TRANSFER", "WAIT"].includes(leg.mode)) return;
+  const previous = adjacentRide(-1),
+    next = adjacentRide(1);
+  const exit =
+    leg.mode !== "WAIT" && !next?.staySeated
+      ? gateway(previous?.toStop, "WALK_DESTINATION")
+      : undefined;
+  const entry = !next?.staySeated
+    ? gateway(next?.fromStop, "WALK_ORIGIN")
+    : undefined;
+  return (
+    [
+      exit && `建议出口 ${exit}`,
+      entry && `${exit ? "入口" : "建议入口"} ${entry}`,
+    ]
+      .filter(Boolean)
+      .join(" → ") || undefined
+  );
+}
+
 export function transitPhaseDetail(state: NavigationState): string {
   const leg = state.route?.legs[state.legIndex];
   if (!leg) return "";
@@ -110,6 +168,7 @@ export interface GuidanceView {
   next?: string;
   nextIcon?: ManeuverIcon;
   stale: boolean;
+  access?: string;
 }
 
 /** A single structured action, never clauses extracted from provider prose. */
@@ -131,10 +190,15 @@ export function guidanceView(
     state.phase === "NAVIGATING" &&
     Boolean(staleInstruction(state.location?.timestamp, mode, now));
   if (!leg) return plain("等待选择路线");
+  const access = stationAccessGuidance(state);
   if (leg.mode === "WAIT") {
     const ride = state.route?.legs[state.legIndex + 1];
     return {
-      ...plain(`候车 ${transitLineLabel(leg.line || ride?.line)}`),
+      ...plain(
+        ["候车", transitLineLabel(leg.line || ride?.line)]
+          .filter(Boolean)
+          .join(" "),
+      ),
       icon: "transport",
       distance: [
         leg.headsign || ride?.headsign,
@@ -143,14 +207,18 @@ export function guidanceView(
       ]
         .filter(Boolean)
         .join(" · "),
-      next: `上车 ${leg.from || ride?.from || "请确认站名"}`,
+      next:
+        leg.from || ride?.from ? `上车 ${leg.from || ride?.from}` : undefined,
+      access,
       stale,
     };
   }
   if (leg.mode === "RIDE")
     return {
       ...plain(
-        `${state.boarded ? "乘坐" : "待上车"} ${transitLineLabel(leg.line)}`,
+        [state.boarded ? "乘坐" : "待上车", transitLineLabel(leg.line)]
+          .filter(Boolean)
+          .join(" "),
       ),
       icon: "transport",
       distance: [
@@ -164,7 +232,10 @@ export function guidanceView(
         state.route?.legs[state.legIndex + 1]?.mode === "RIDE" &&
         state.route.legs[state.legIndex + 1].staySeated
           ? "直通无需下车"
-          : `${state.boarded ? "下车" : "上车"} ${(state.boarded ? leg.to : leg.from) || "请确认站名"}`,
+          : (state.boarded ? leg.to : leg.from)
+            ? `${state.boarded ? "下车" : "上车"} ${state.boarded ? leg.to : leg.from}`
+            : undefined,
+      access,
       stale,
     };
   if (leg.mode === "TRANSFER")
@@ -174,7 +245,8 @@ export function guidanceView(
       next:
         [transitLineLabel(leg.line), leg.platform && `${leg.platform}站台`]
           .filter(Boolean)
-          .join(" · ") || "到达后确认完成换乘",
+          .join(" · ") || undefined,
+      access,
       stale,
     };
   const step = leg.steps[state.stepIndex];
@@ -192,7 +264,7 @@ export function guidanceView(
       ? iconForManeuver(maneuver)
       : "straight";
   if (!step || !Number.isFinite(state.stepRemainingMeters))
-    return { action, icon, stale };
+    return { action, icon, stale, access };
   const meters = Math.max(0, state.stepRemainingMeters);
   const distance =
     meters >= 1000
@@ -208,6 +280,7 @@ export function guidanceView(
     action,
     icon,
     stale,
+    access,
     distance: `本段剩余 ${distance}`,
     next,
     nextIcon: next ? iconForManeuver(nextManeuver) : undefined,
@@ -219,7 +292,7 @@ export function conciseInstruction(
   now = Date.now(),
 ): string {
   const view = guidanceView(state, mode, now);
-  return `${view.action}${view.distance ? `\n${view.distance}` : ""}${view.next ? `\n\n下一步：${view.next}` : ""}`;
+  return `${view.action}${view.distance ? `\n${view.distance}` : ""}${view.next ? `\n\n下一步：${view.next}` : ""}${view.access ? `\n${view.access}` : ""}`;
 }
 
 export function currentStepDetail(state: NavigationState): string {
@@ -329,7 +402,7 @@ function clockText(timestamp: number | undefined): string {
     timestamp === undefined ||
     !Number.isFinite(new Date(timestamp).getTime())
   )
-    return "--:--";
+    return "";
   const date = new Date(timestamp);
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
@@ -343,19 +416,27 @@ export function hudStatus(
   const meters = state.remainingMeters;
   const distance =
     !Number.isFinite(meters) || meters < 0
-      ? "--"
+      ? ""
       : meters >= 1000
         ? `${(meters / 1000).toFixed(1)} km`
         : `${Math.round(meters)} m`;
-  const total = `总剩余 ${distance}  现在${clockText(now)}`;
-  if (state.paused) return `${total}\n预计到达 --:-- · 已暂停`;
+  const clock = clockText(now);
+  const total = [distance && `总剩余 ${distance}`, clock && `现在${clock}`]
+    .filter(Boolean)
+    .join("  ");
+  if (state.paused) return [total, "已暂停"].filter(Boolean).join("\n");
   if (state.phase === "ARRIVED") return `${total}\n已到达`;
-  if (state.phase !== "NAVIGATING") return `${total}\n预计到达 --:--`;
-  const arrival = `预计到达 ${clockText(estimatedArrival(state, mode, now))}`;
-  const status =
+  if (state.phase !== "NAVIGATING") return total;
+  const arrivalClock = clockText(estimatedArrival(state, mode, now));
+  const arrival = arrivalClock ? `预计到达 ${arrivalClock}` : "";
+  const refreshing =
     guidanceView(state, mode, now).stale || state.locationStale
-      ? `${total}\n${arrival} ${Math.floor(now / 1000) % 2 ? "●" : " "} 更新定位中`
-      : `${total}\n${arrival}`;
+      ? `${Math.floor(now / 1000) % 2 ? "●" : " "} 更新定位中`
+      : "";
+  const status = [total, [arrival, refreshing].filter(Boolean).join(" ")]
+    .filter(Boolean)
+    .join("\n")
+    .trim();
   const departure = mode === "TRANSIT" ? departureText(state, now, true) : "";
   const withDeparture = departure
     ? `${departure}\n${status.replace("\n", "  ")}`

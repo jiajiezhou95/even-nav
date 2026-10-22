@@ -76,7 +76,7 @@ export function transitLegOverview(leg: Route["legs"][number]): string {
       .join("\n");
   if (leg.mode === "WAIT")
     return [
-      `候车 ${transitLineLabel(leg.line)} · ${minutes}`,
+      `${["候车", transitLineLabel(leg.line)].filter(Boolean).join(" ")} · ${minutes}`,
       from || to,
       [platformText, departure && `出发 ${departure}`]
         .filter(Boolean)
@@ -85,32 +85,40 @@ export function transitLegOverview(leg: Route["legs"][number]): string {
     ]
       .filter(Boolean)
       .join("\n");
-  const stops = leg.intermediateStops?.map((stop, index) => {
-    const at = clock(stop.arrivalTime || stop.scheduledArrivalTime);
-    return [
-      stop.name || `未命名站点${index + 1}`,
-      at,
-      stop.platform
-        ? `${stop.platform}站台`
-        : stop.scheduledPlatform
-          ? `计划${stop.scheduledPlatform}站台`
-          : "",
-      stop.cancelled && "停靠取消",
+  const stops = leg.intermediateStops
+    ?.filter((stop) => stop.name?.trim())
+    .map((stop) => {
+      const at = clock(stop.arrivalTime || stop.scheduledArrivalTime);
+      return [
+        stop.name,
+        at,
+        stop.platform
+          ? `${stop.platform}站台`
+          : stop.scheduledPlatform
+            ? `计划${stop.scheduledPlatform}站台`
+            : "",
+        stop.cancelled && "停靠取消",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+    });
+  return [
+    [
+      transitLineLabel(leg.line)
+        ? `乘坐 ${transitLineLabel(leg.line)}`
+        : "乘车",
+      leg.headsign && `往${leg.headsign}`,
+      minutes,
     ]
       .filter(Boolean)
-      .join(" · ");
-  });
-  return [
-    `乘坐 ${transitLineLabel(leg.line)}${leg.headsign ? ` · 往${leg.headsign}` : ""} · ${minutes}`,
-    `${from || "上车站未提供"}${platformText ? ` · ${platformText}` : ""}${departure ? ` · 出发 ${departure}` : ""}`,
-    stops === undefined
-      ? "中途站未提供"
-      : stops.length
-        ? `途经停靠站：\n${stops.join("\n")}`
-        : "无中途停靠站",
-    `${to || "下车站未提供"}${arrival ? ` · 到达 ${arrival}` : ""}`,
+      .join(" · "),
+    [from, platformText, departure && `出发 ${departure}`]
+      .filter(Boolean)
+      .join(" · "),
+    stops?.length ? `途经停靠站：\n${stops.join("\n")}` : "",
+    [to, arrival && `到达 ${arrival}`].filter(Boolean).join(" · "),
     leg.staySeated ? "直通无需下车" : "",
-    leg.realtime ? "包含实时更新" : "时刻表时间（无实时延误数据）",
+    (departure || arrival) && (leg.realtime ? "包含实时更新" : "时刻表时间"),
     ...stationAccessOverview(leg),
   ]
     .filter(Boolean)
@@ -125,7 +133,7 @@ export function routeOverviewSteps(
 ): HudRouteStep[] {
   if (isTransitOverview(route))
     return route.legs.map((leg, index) => ({
-      text: `${transitLegOverview(leg)}${index === route.legs.length - 1 ? "\n未显示的站台或出入口尚未匹配到可靠信息" : ""}`,
+      text: transitLegOverview(leg),
       current: index === legIndex,
     }));
   return route.legs.flatMap((leg, index) => {

@@ -83,6 +83,61 @@ export function hudCueText(view: GuidanceView) {
   };
 }
 
+/** Keep the next turn and the selected station access together in the 64px header. */
+export function fitHudSecondary(
+  next: string,
+  access: string,
+  width: number,
+  measure: (value: string, fontSize: number) => number,
+) {
+  const text = [next, access].filter(Boolean).join("\n");
+  for (let fontSize = 21; fontSize >= 14; fontSize--) {
+    const lineHeight = fontSize + 3;
+    const lines = wrapHudText(text, width, (value) => measure(value, fontSize));
+    if (lines.length * lineHeight <= 56) return { lines, fontSize, lineHeight };
+  }
+  const fontSize = 14,
+    lineHeight = 17;
+  const shorten = (value: string, maxLines: number, preserveCodes = false) => {
+    const fits = (candidate: string) =>
+      wrapHudText(candidate, width, (part) => measure(part, fontSize)).length <=
+      maxLines;
+    if (fits(value)) return value;
+    // Provider names can contain long station descriptions. Preserve all actual
+    // exit identifiers (A3, B2-1, 8番出口) rather than ellipsizing their suffix.
+    const codes = preserveCodes
+      ? value.match(
+          /(?<![A-Za-z0-9])(?:[A-Za-z]\d+(?:[-－]\d+)?[A-Za-z]?(?:番)?(?:出口|入口|口)?|\d+(?:[-－]\d+)?(?:番)?(?:出口|入口|口))(?![A-Za-z0-9])/g,
+        )
+      : undefined;
+    if (codes?.length) {
+      const label = value.match(/^(?:建议)?(?:出口|入口)\s*/)?.[0] ?? "";
+      const compact = `${label}${codes.join(" / ")}`;
+      if (fits(compact)) return compact;
+    }
+    const chars = Array.from(value);
+    while (chars.length > 2) {
+      chars.splice(Math.floor(chars.length / 2), 1);
+      const midpoint = Math.ceil(chars.length / 2);
+      const compact = `${chars.slice(0, midpoint).join("")}…${chars.slice(midpoint).join("")}`;
+      if (fits(compact)) return compact;
+    }
+    return "…";
+  };
+  const accesses = access.split(/\s*→\s*/);
+  const accessLines =
+    accesses.length === 2
+      ? [shorten(accesses[0]!, 1, true), shorten(accesses[1]!, 1, true)]
+      : wrapHudText(shorten(access, next ? 2 : 3, true), width, (part) =>
+          measure(part, fontSize),
+        );
+  return {
+    lines: [...(next ? [shorten(next, 1)] : []), ...accessLines],
+    fontSize,
+    lineHeight,
+  };
+}
+
 async function bitmap(pixels: Uint8Array) {
   return createImageBitmap(
     new Blob([pixels.slice().buffer], { type: "image/png" }),
@@ -139,16 +194,15 @@ export async function drawHudCanvas(
     x: number,
     width: number,
     suffix = "",
+    access = "",
   ) => {
-    const fit = fitHudHeader(
-      message,
-      width,
-      (value, size) => {
-        ctx.font = `${size}px "Microsoft YaHei", "PingFang SC", sans-serif`;
-        return ctx.measureText(value).width;
-      },
-      suffix,
-    );
+    const measure = (value: string, size: number) => {
+      ctx.font = `${size}px "Microsoft YaHei", "PingFang SC", sans-serif`;
+      return ctx.measureText(value).width;
+    };
+    const fit = access
+      ? fitHudSecondary(message, access, width, measure)
+      : fitHudHeader(message, width, measure, suffix);
     ctx.font = `${fit.fontSize}px "Microsoft YaHei", "PingFang SC", sans-serif`;
     ctx.save();
     ctx.beginPath();
@@ -169,7 +223,7 @@ export async function drawHudCanvas(
       [cues.current, view.icon, 12],
       [cues.next, view.nextIcon, 328],
     ] as const) {
-      if (!text) continue;
+      if (!text && !(x !== 12 && view.access)) continue;
       if (icon && icon !== "none") {
         const image = await bitmap(await maneuverPng(icon));
         try {
@@ -187,6 +241,7 @@ export async function drawHudCanvas(
         x === 12 && view.distance
           ? cues.current.slice(view.action.length).trim()
           : "",
+        x === 12 ? "" : view.access,
       );
     }
   } else {

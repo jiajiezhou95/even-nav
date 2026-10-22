@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { NavigationSession } from "../../../packages/core/src/navigation";
-import type { Route } from "../../../packages/contracts/src/index";
+import type {
+  Route,
+  RouteLeg,
+  StationAccess,
+} from "../../../packages/contracts/src/index";
 import {
   conciseInstruction,
   currentStepDetail,
@@ -48,6 +52,131 @@ function start() {
   session.start(route.id, { coordinate: points[0], timestamp: now }, now);
   return session;
 }
+function accessState() {
+  const state = start().snapshot;
+  const access = (
+    name: string,
+    reference: "WALK_ORIGIN" | "WALK_DESTINATION",
+  ): StationAccess => ({
+    source: "NAVITIME",
+    fetchedAt: new Date(now).toISOString(),
+    nodeId: name,
+    lineId: "synthetic",
+    selection: "NEAREST_STRAIGHT_LINE",
+    gateways: [{ name, coordinate: points[0], directions: ["up", "down"] }],
+    selectedGateway: {
+      name,
+      reference,
+      coordinate: points[0],
+      directions: ["up", "down"],
+      distanceMeters: 42,
+    },
+  });
+  const walk = state.route!.legs[0];
+  const ride = (entry: string, exit: string): RouteLeg => ({
+    mode: "RIDE",
+    geometry: points,
+    steps: [],
+    distanceMeters: 1000,
+    durationSeconds: 300,
+    line: "合成线",
+    from: "甲站",
+    to: "乙站",
+    fromStop: { stationAccess: access(entry, "WALK_ORIGIN") },
+    toStop: { stationAccess: access(exit, "WALK_DESTINATION") },
+  });
+  state.route!.legs = [
+    walk,
+    { ...walk, mode: "WAIT", steps: [] },
+    ride("A3口", "B2口"),
+    { ...walk, mode: "TRANSFER" },
+    ride("C1口", "D4口"),
+    walk,
+  ];
+  return state;
+}
+
+describe("phase-specific station access guidance", () => {
+  it("shows recommended entry while approaching and waiting, keeping turns and remaining distance", () => {
+    const state = accessState();
+    const view = guidanceView(state, "TRANSIT", now);
+    expect(view).toMatchObject({
+      action: "直行",
+      next: "向右转",
+      access: "建议入口 A3口",
+    });
+    expect(view.distance).toContain("本段剩余");
+    expect(view.access).not.toContain("42"); // Selection distance is not current GPS distance.
+    expect(conciseInstruction(state, "TRANSIT", now)).toContain(
+      "建议入口 A3口",
+    );
+    state.legIndex = 1;
+    expect(guidanceView(state, "TRANSIT", now).access).toBe("建议入口 A3口");
+    state.legIndex = 2;
+    expect(guidanceView(state, "TRANSIT", now).access).toBe("建议入口 A3口");
+    state.boarded = true;
+    expect(guidanceView(state, "TRANSIT", now).access).toBeUndefined();
+    expect(guidanceView(state, "TRANSIT", now).next).toBe("下车 乙站");
+  });
+  it("uses only adjacent rides during transfer and the final exit after alighting", () => {
+    const state = accessState();
+    state.legIndex = 3;
+    expect(guidanceView(state, "TRANSIT", now).access).toBe(
+      "建议出口 B2口 → 入口 C1口",
+    );
+    state.route!.legs[3].mode = "WALK";
+    expect(guidanceView(state, "TRANSIT", now).access).toBe(
+      "建议出口 B2口 → 入口 C1口",
+    );
+    state.legIndex = 5;
+    expect(guidanceView(state, "TRANSIT", now).access).toBe("建议出口 D4口");
+    expect(guidanceView(state, "TRANSIT", now).access).not.toContain("B2");
+    const thirdRide = structuredClone(state.route!.legs[4]);
+    thirdRide.fromStop!.stationAccess!.selectedGateway!.name = "E5口";
+    thirdRide.toStop!.stationAccess!.selectedGateway!.name = "F6口";
+    state.route!.legs.push(thirdRide, structuredClone(state.route!.legs[0]));
+    expect(guidanceView(state, "TRANSIT", now).access).toBe(
+      "建议出口 D4口 → 入口 E5口",
+    );
+    state.legIndex = 7;
+    expect(guidanceView(state, "TRANSIT", now).access).toBe("建议出口 F6口");
+  });
+  it("omits absent/unselected/wrong-end recommendations and never reaches across another ride", () => {
+    const state = accessState();
+    delete state.route!.legs[2].fromStop!.stationAccess!.selectedGateway;
+    expect(guidanceView(state, "TRANSIT", now).access).toBeUndefined();
+    state.legIndex = 3;
+    state.route!.legs[2].toStop!.stationAccess!.selection =
+      "UNSELECTED_CANDIDATES";
+    state.route!.legs[4].fromStop!.stationAccess!.selectedGateway!.reference =
+      "WALK_DESTINATION";
+    expect(guidanceView(state, "TRANSIT", now).access).toBeUndefined();
+    expect(conciseInstruction(state, "TRANSIT", now)).not.toMatch(
+      /未提供|待补充|未知/,
+    );
+  });
+  it("suppresses access for stay-seated rides and preserves it through stale fixes but not pause/end/route selection", () => {
+    const state = accessState();
+    state.legIndex = 3;
+    state.route!.legs[4].staySeated = true;
+    expect(guidanceView(state, "TRANSIT", now).access).toBeUndefined();
+    state.legIndex = 4;
+    expect(guidanceView(state, "TRANSIT", now).access).toBeUndefined();
+    state.legIndex = 0;
+    expect(guidanceView(state, "TRANSIT", now + 60000)).toMatchObject({
+      stale: true,
+      access: "建议入口 A3口",
+    });
+    state.paused = true;
+    expect(guidanceView(state, "TRANSIT", now).access).toBeUndefined();
+    state.paused = false;
+    state.phase = "ARRIVED";
+    expect(guidanceView(state, "TRANSIT", now).access).toBeUndefined();
+    state.phase = "ROUTE_SELECTION";
+    expect(guidanceView(state, "TRANSIT", now).access).toBeUndefined();
+  });
+});
+
 describe("compact structured navigation guidance", () => {
   it("keeps line, direction, stops and provided platform visible through stale transit GPS", () => {
     const state = start().snapshot;
@@ -157,7 +286,7 @@ describe("compact structured navigation guidance", () => {
     expect(status).toContain("更新定位中");
     expect(status.split("\n")).toHaveLength(2);
     expect(estimatedArrival(state, "WALK", now + 240000)).toBeUndefined();
-    expect(hudStatus(state, "WALK", now + 240000)).toContain("预计到达 --:--");
+    expect(hudStatus(state, "WALK", now + 240000)).not.toContain("预计到达");
   });
   it("formats local date rollover and handles paused, ended and malformed input safely", () => {
     const state = start().snapshot;
@@ -167,9 +296,7 @@ describe("compact structured navigation guidance", () => {
       "23:59\n预计到达 00:02",
     );
     state.paused = true;
-    expect(hudStatus(state, "WALK", midnight)).toContain(
-      "预计到达 --:-- · 已暂停",
-    );
+    expect(hudStatus(state, "WALK", midnight)).toContain("已暂停");
     state.paused = false;
     state.phase = "ENDED";
     expect(estimatedArrival(state, "WALK", midnight)).toBeUndefined();
@@ -177,9 +304,7 @@ describe("compact structured navigation guidance", () => {
     state.route!.legs[0].steps[1].durationSeconds = NaN;
     expect(estimatedArrival(state, "WALK", midnight)).toBeUndefined();
     state.remainingMeters = NaN;
-    expect(hudStatus(state, "WALK", NaN)).toBe(
-      "总剩余 --  现在--:--\n预计到达 --:--",
-    );
+    expect(hudStatus(state, "WALK", NaN)).toBe("");
   });
   it("adds an uncertainty question without replacing the approved location status", () => {
     const state = start().snapshot;

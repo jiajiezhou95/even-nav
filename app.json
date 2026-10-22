@@ -2,7 +2,7 @@
   "package_id": "io.github.jiajiezhou95.evennav",
   "edition": "202601",
   "name": "Even Nav",
-  "version": "0.1.24",
+  "version": "0.1.25",
   "min_app_version": "2.2.10",
   "min_sdk_version": "0.0.16",
   "entrypoint": "index.html",
@@ -10,18 +10,12 @@
     {
       "name": "network",
       "desc": "访问本人后端以导入链接、查询路线和地图",
-      "whitelist": [
-        "https://even-nav-personal.jiajie-zhou95.workers.dev"
-      ]
+      "whitelist": ["https://even-nav-personal.jiajie-zhou95.workers.dev"]
     },
     {
       "name": "location",
       "desc": "使用手机当前位置进行导航"
     }
   ],
-  "supported_languages": [
-    "zh",
-    "ja",
-    "en"
-  ]
+  "supported_languages": ["zh", "ja", "en"]
 }
