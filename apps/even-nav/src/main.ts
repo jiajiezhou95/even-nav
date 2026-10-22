@@ -228,7 +228,7 @@ function report(caught: unknown) {
   if (caught instanceof DOMException && caught.name === "AbortError") return;
   error =
     caught instanceof NavError
-      ? `${caught.message} ${caught.fallback}`
+      ? `${caught.message}${caught.fallback.includes("手动坐标") ? "" : ` ${caught.fallback}`}`
       : "操作未完成，请检查连接后重试。";
   busy = false;
   render();
@@ -386,6 +386,14 @@ function render() {
   // Keep the real canvas and its listeners when rebuilding route cards.
   $("#workflow").after($("#map-panel"));
   let html = "";
+  if (state.phase !== "EMPTY") {
+    const backLabel = ["NAVIGATING", "ARRIVED"].includes(state.phase)
+      ? "结束导航并返回"
+      : ["ROUTE_SELECTION", "PLANNING", "ENDED"].includes(state.phase)
+        ? "返回目的地"
+        : "返回粘贴链接";
+    html += `<button id="workflow-back" class="text-button workflow-back">← ${backLabel}</button>`;
+  }
   if (busy)
     html += `<div class="loading" role="status"><span class="spinner"></span>${state.phase === "PLANNING" ? "正在查询实际路线…" : "正在处理输入…"}<button id="cancel" class="text-button">取消</button></div>`;
   if (
@@ -460,6 +468,7 @@ function render() {
         detail.open = true;
     });
   $("#cancel")?.addEventListener("click", cancel);
+  $("#workflow-back")?.addEventListener("click", () => void back());
   $("#candidate")?.addEventListener("change", (event) => {
     candidateChosen = true;
     destination =
@@ -550,6 +559,51 @@ function cancel() {
   notice = "操作已取消。";
   render();
 }
+async function back() {
+  const state = session.snapshot;
+  const intent = [
+    "ROUTE_SELECTION",
+    "PLANNING",
+    "NAVIGATING",
+    "ARRIVED",
+    "ENDED",
+  ].includes(state.phase)
+    ? state.intent
+    : undefined;
+  // Reset the request/version before awaiting device cleanup. Late queries,
+  // location replies and map renders must not restore the screen being left.
+  const request = session.beginRequest("IMPORTING");
+  if (intent) session.acceptImport(request.version, intent);
+  else {
+    session.cancel();
+    destination = undefined;
+    candidateChosen = false;
+    departureSelection = "";
+  }
+  const version = session.snapshot.version;
+  selected = "";
+  error = "";
+  notice = "";
+  busy = true;
+  lastMapFrame = undefined;
+  map.dispose();
+  $("#map-panel").hidden = true;
+  render();
+  try {
+    await stopNavigation(false);
+  } catch (caught) {
+    if (session.snapshot.version === version) report(caught);
+  } finally {
+    if (session.snapshot.version === version) {
+      busy = false;
+      render();
+      (intent ? $("#workflow") : $("#share-input")).scrollIntoView({
+        behavior: "auto",
+        block: "start",
+      });
+    }
+  }
+}
 async function importInput(text: string) {
   const request = session.beginRequest("IMPORTING");
   busy = true;
@@ -630,7 +684,7 @@ async function importInput(text: string) {
     }
   }
 }
-async function plan(fromGlasses = false) {
+async function plan(fromGlasses = false, previewReason = "") {
   if (busy || !candidateChosen || !destination?.coordinate) return;
   departureRefreshMessage = "";
   routeOverview = false;
@@ -641,7 +695,7 @@ async function plan(fromGlasses = false) {
   const request = session.beginRequest("PLANNING");
   busy = true;
   error = "";
-  notice = "";
+  notice = previewReason ? `${previewReason}；正在按当前位置重新查询…` : "";
   render();
   try {
     await stopNavigation(false);
@@ -682,6 +736,8 @@ async function plan(fromGlasses = false) {
     if (session.acceptRoutes(request.version, response.routes, origin)) {
       selected = response.routes[0]?.id || "";
       busy = false;
+      if (previewReason)
+        notice = `${previewReason}。路线已更新，请确认路线后再次开始导航。`;
       render();
       requestAnimationFrame(() => {
         if (
@@ -719,6 +775,7 @@ async function start() {
   const version = session.snapshot.version,
     routeId = selected;
   let started = false;
+  let startedVersion: number | undefined;
   try {
     busy = true;
     render();
@@ -726,13 +783,34 @@ async function start() {
     if (version !== session.snapshot.version) return;
     session.start(routeId, current);
     started = true;
+    startedVersion = session.snapshot.version;
     device.setVersion(session.snapshot.version);
     await device.startLocation();
+    if (startedVersion !== session.snapshot.version) return;
     busy = false;
     startNavigationTick();
     render();
     await drawMap();
   } catch (caught) {
+    if (started && startedVersion !== session.snapshot.version) return;
+    if (!started && version !== session.snapshot.version) return;
+    if (
+      !started &&
+      caught instanceof NavError &&
+      caught.code === "NO_ROUTE" &&
+      session.snapshot.replanNeeded
+    ) {
+      // One bounded refresh, never silently start a changed itinerary or loop.
+      // A previously selected departure in the past cannot recover a missed bus.
+      if (
+        departureSelection &&
+        Date.parse(`${departureSelection}:00+09:00`) <= Date.now()
+      )
+        departureSelection = "";
+      busy = false;
+      await plan(false, caught.message);
+      return;
+    }
     if (started) {
       session.pause();
       await stopNavigation(false).catch(() => {});

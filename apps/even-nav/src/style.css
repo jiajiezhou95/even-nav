@@ -757,6 +757,10 @@ dialog > p {
 #workflow {
   scroll-margin-top: 18px;
 }
+.workflow-back {
+  min-height: 44px;
+  margin-bottom: 12px;
+}
 #google-attribution,
 .provider-attribution {
   height: 18px;

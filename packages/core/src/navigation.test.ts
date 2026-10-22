@@ -83,11 +83,11 @@ describe("request and navigation lifecycle", () => {
     ).toThrow());
   it("rejects expired preview", () =>
     expect(() => ready().start("synthetic", fix(121), now + 121000)).toThrow(
-      /预览/,
+      "路线预览时间已失效，请重新查询",
     ));
   it("rejects changed start location", () =>
     expect(() => ready().start("synthetic", fix(0, 10.01), now)).toThrow(
-      /起点/,
+      "当前定位与查询起点相差较大，请按当前位置重新查询",
     ));
   it("rejects stale GPS", () =>
     expect(() => ready().start("synthetic", fix(), now + 16000)).toThrow(
@@ -101,7 +101,7 @@ describe("request and navigation lifecycle", () => {
       startTime: new Date(now - 1000).toISOString(),
     };
     expect(() => ready(route([ride])).start("synthetic", fix(), now)).toThrow(
-      /班次/,
+      "所选班次已发车，请查询下一班",
     );
   });
   it("defensively owns accepted routes and snapshot", () => {

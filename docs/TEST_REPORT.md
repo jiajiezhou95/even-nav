@@ -1,3 +1,11 @@
+### Beta 0.1.29 — rejected-start recovery and phone back (2026-10-22)
+
+- Adds phase-aware phone back navigation, preserving pasted input and cancelling pending routes/location work. Active navigation uses explicit end-and-return wording. Late async replies cannot restore an abandoned screen.
+- Start guards remain unchanged; expired preview, moved origin and departed service now have distinct messages. Rejection triggers one query from fresh phone location, then requires confirmation of updated alternatives. Failed refresh retains destination/retry; obsolete manual-coordinate fallback is hidden.
+- User reports every link fails immediately. The original combined error cannot identify the condition, and normal 60-second preview expiry is NOT an established root cause. Server health Date matched host clock; phone timing/GPS and the immediate real-device failure remain unverified. This release fixes recovery/back and improves observability, not proof of the device root cause.
+- 549 unit tests, typecheck, formatting, build/privacy153files PASS; 10 new mock HTTP/GPS browser scenarios plus six relevant regressions PASS. Includes immediate fresh start without refresh, each guard, failed refresh, back during planning/recovery and late location callback. No paid provider calls or Worker deployment; provider evidence from0.1.28 reused.
+- Candidate0.1.29:96107bytes,SHA256 `1478e8cfe9a9d6f220331bd062fe32ee2c83b0e217efe6271be1a4f34b8075b7`. Private upload/download, exact-head CI and Beta channel are separate delivery gates; hardware acceptance NOT RUN.
+
 ### Beta 0.1.28 — official Chiibus routes (2026-10-22)
 
 - Adds official 赤坂/青山 GTFS timetable/path candidates with real Google walking connections, preserves baseline rail options and uses existing bus navigation/countdown. No new UI layout or device protocol changes.

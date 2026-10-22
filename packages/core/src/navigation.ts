@@ -222,18 +222,28 @@ export class NavigationSession {
     if (!this.validFix(fix, now))
       throw new NavError("LOCATION_UNAVAILABLE", "需要新的可靠手机定位");
     const nextRide = route.legs.find((l) => l.mode === "RIDE");
-    if (
+    const previewExpired =
       now >= Date.parse(route.expiresAt) ||
-      now - Date.parse(route.fetchedAt) > this.config.previewMaxAgeMs ||
-      (this.origin &&
-        distanceMeters(this.origin, fix.coordinate) >
-          this.config.originMovementMeters) ||
-      (nextRide?.startTime && now > Date.parse(nextRide.startTime))
-    ) {
+      now - Date.parse(route.fetchedAt) > this.config.previewMaxAgeMs;
+    const originMoved = Boolean(
+      this.origin &&
+      distanceMeters(this.origin, fix.coordinate) >
+        this.config.originMovementMeters,
+    );
+    const departed = Boolean(
+      nextRide?.startTime && now > Date.parse(nextRide.startTime),
+    );
+    if (previewExpired || originMoved || departed) {
       this.state.replanNeeded = true;
       throw new NavError(
         "NO_ROUTE",
-        "预览已过期、起点移动或班次已发车，请重新查询",
+        previewExpired
+          ? "路线预览时间已失效，请重新查询"
+          : originMoved
+            ? "当前定位与查询起点相差较大，请按当前位置重新查询"
+            : "所选班次已发车，请查询下一班",
+        true,
+        "",
       );
     }
     this.controller.abort();

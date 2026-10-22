@@ -62,3 +62,7 @@ Private Beta0.1.25 adds entry/exit recommendations to active phone/G2 guidance a
 ## Chiibus coverage repair — 2026-10-22
 
 0.1.28 supplements missing 赤坂/青山 lines from official operator GTFS with actual Google walking connections. Provider, Worker and mock UI acceptance used isolated parallel ownership; root diagnosed two live integration failures and verified the final deployed private OD returns both lines. 549 tests/type/format/build/privacy and focused browser flow PASS. Exact-head CI and private Beta delivery tracked separately; no actual bus/G2/lockscreen claim. See docs/BUS_ACCEPTANCE.md.
+
+## Preview recovery and back navigation — 2026-10-22
+
+0.1.29 repairs the dead-end after rejected starts and adds phone workflow back navigation with cancellation/version invalidation. Preserve preview/departure/origin checks; refresh once and require confirmation of new alternatives. Distinguish the three rejection reasons and remove obsolete manual-coordinate fallback. User reports immediate failure for all links, so ordinary preview expiry is NOT established as the device root cause. Synthetic immediate-start/recovery/back acceptance and private Beta delivery are separate from device confirmation. No provider/Worker changes or new paid API probes.
