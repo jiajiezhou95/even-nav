@@ -355,7 +355,9 @@ export async function enrichNavitime(
     let missing = 0;
     let resolvedLine = false;
     for (const leg of route.legs) {
-      if (leg.mode !== "RIDE") continue;
+      // This enrichment uses train-only metadata. Bus numbers are real public
+      // line names, not opaque rail IDs, and bus stops are not station exits.
+      if (leg.mode !== "RIDE" || leg.transitMode === "BUS") continue;
       if (!eligible(leg) || stopped) {
         missing++;
         continue;

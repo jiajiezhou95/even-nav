@@ -64,6 +64,31 @@ function observed(guard: MissedDepartureRefresh, s = state()) {
   return s;
 }
 describe("real transit departure countdown and rollover", () => {
+  it("preserves numeric bus services in phone and HUD departure countdowns", () => {
+    const s = state();
+    Object.assign(s.route!.legs[1], {
+      transitMode: "BUS",
+      line: "１２",
+      headsign: "合成总站",
+    });
+    for (const compact of [false, true]) {
+      const text = departureText(s, now, compact);
+      expect(text).toContain("下一班 公交 12 · 往合成总站");
+      expect(text).toContain("09:00 · 0分30秒");
+    }
+    expect(transitLineLabel(undefined, "BUS")).toBe("公交");
+    expect(transitLineLabel("１２", "RAIL")).toBe("");
+  });
+  it("requires confirmation when the same named stops and service change between bus and rail", () => {
+    const s = state(),
+      route = structuredClone(s.route!);
+    route.legs[1].transitMode = "RAIL";
+    expect(sameRemainingRides(s, route)).toBe(true); // Legacy legs are rail.
+    route.legs[1].transitMode = "BUS";
+    expect(sameRemainingRides(s, route)).toBe(false);
+    s.route!.legs[1].transitMode = "BUS";
+    expect(sameRemainingRides(s, route)).toBe(true);
+  });
   it("shows line and supplied headsign with clock/countdown, preserving full phone labels", () => {
     const s = state(),
       leg = s.route!.legs[1];

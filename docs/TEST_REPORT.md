@@ -1,3 +1,10 @@
+### Beta 0.1.27 — bus and mixed transit (2026-10-22)
+
+- Root cause: rail-only query modes and result filtering. BUS is now accepted throughout provider normalization, wait/ride state and shared phone/G2 text. Numeric bus lines remain visible; rail numeric IDs stay hidden. Bus stops skip train-only NAVITIME enrichment, station gateway prompts and rail platform wording. Automatic route replacement compares vehicle type before silently resuming.
+- Fresh deployed Worker43dfeb50-4231-4a2b-b92e-9792505ba4ca: two public Tokyo OD requests returned six itineraries including buses and rail+bus; names, stops, times and chronology PASS. See BUS_ACCEPTANCE.md. Two Transitous calls, zero Google calls, no retry; exact NAVITIME upstream count was not metered. No paid upgrade.
+- 527 unit tests PASS; TypeScript, formatting, build and privacy147files PASS. Focused phone import-to-bus-navigation Chromium test PASS with mocked HTTP/GPS. Root updated the existing departed-service assertion for neutral bus/rail wording. Actual bus trip/G2/lockscreen remains NOT RUN. Provider coverage and top-three selection remain limitations.
+- Candidate0.1.27:95335bytes,SHA2565038a370c639727aba9114f45390482e0d2d4fda4730c72faac2d0c23df2bc6d. Exact-head CI, official upload/download and private beta channel readback are separate final gates. No public release or merge.
+
 ### Beta 0.1.26 — automatic off-route correction (2026-10-22)
 
 - Confirmed walking/transfer/driving deviation now requests a replacement itinerary from the latest reliable fix. Walking requires multiple distinct accurate fixes over at least four seconds, with accuracy-scaled distance threshold. Confirmed backward walking rewinds progress and displays a U-turn; normal forward matching still tolerates sparse accepted fixes. Train/WAIT phases do not use road deviation detection.

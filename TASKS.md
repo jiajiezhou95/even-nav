@@ -54,3 +54,7 @@ Private Beta0.1.25 adds entry/exit recommendations to active phone/G2 guidance a
 ## Automatic off-route correction — 2026-10-22
 
 0.1.26 replaces manual-only deviation handling with latest-position rerouting and confirmed reverse-walking correction. Independent core/UI owners integrated by root; root caught and repaired sparse-fix forward-matching regression. 511 unit tests, five synthetic GPS/mock HTTP browser flows, type/format/build/privacy checks PASS. No new live provider calls or Worker changes. Exact-head CI and private channel promotion tracked separately; real walking/G2/lockscreen acceptance remains pending.
+
+## Bus routing — 2026-10-22
+
+0.1.27 removes the rail-only provider restriction and preserves BUS/RAIL identity in shared guidance. Provider/contracts and UI implemented in isolated parallel ownership; root reviews, deploys and verifies. Two fresh deployed public Tokyo queries returned bus-only and rail+bus itineraries. See docs/BUS_ACCEPTANCE.md. No coach/ferry expansion or paid upgrade; hardware bus journey acceptance remains pending.

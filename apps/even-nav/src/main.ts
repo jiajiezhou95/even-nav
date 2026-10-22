@@ -272,7 +272,7 @@ function transitRouteSummary(route: Route) {
   const rides = route.legs.filter((leg) => leg.mode === "RIDE");
   return {
     lines: rides
-      .map((leg) => transitLineLabel(leg.line))
+      .map((leg) => transitLineLabel(leg.line, leg.transitMode))
       .filter(Boolean)
       .join(" → "),
     transfers: rides.slice(1).filter((leg) => !leg.staySeated).length,

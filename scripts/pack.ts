@@ -23,7 +23,7 @@ const manifest = {
   package_id: "io.github.jiajiezhou95.evennav",
   edition: "202601",
   name: "Even Nav",
-  version: "0.1.26",
+  version: "0.1.27",
   min_app_version: sdk.minAppVersion,
   min_sdk_version: sdk.version,
   entrypoint: "index.html",

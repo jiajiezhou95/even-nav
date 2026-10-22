@@ -446,6 +446,7 @@ const railModes = [
   "SUBURBAN",
   "METRO",
 ];
+const transitModes = [...railModes, "BUS"];
 export async function transitRoutes(
   t: ConfirmedTripRequest,
   userAgent: string,
@@ -457,7 +458,7 @@ export async function transitRoutes(
     fromPlace: `${t.origin.lat},${t.origin.lng}`,
     toPlace: `${t.destination.coordinate!.lat},${t.destination.coordinate!.lng}`,
     time: t.departureTime,
-    transitModes: railModes.join(","),
+    transitModes: transitModes.join(","),
     directModes: "",
     preTransitModes: "WALK",
     postTransitModes: "WALK",
@@ -490,7 +491,7 @@ export async function transitRoutes(
   const routes: Route[] = [];
   for (const it of p.data.itineraries) {
     if (
-      !it.legs.some((l) => railModes.includes(l.mode)) ||
+      !it.legs.some((l) => transitModes.includes(l.mode)) ||
       it.legs.some((l) => l.cancelled || l.loopedCalendarSince)
     )
       continue;
@@ -512,11 +513,12 @@ export async function transitRoutes(
       // navigator waiting for a train before it can reach the station.
       if (
         start > previous &&
-        railModes.includes(l.mode) &&
+        transitModes.includes(l.mode) &&
         !l.interlineWithPreviousLeg
       )
         legs.push({
           mode: "WAIT",
+          transitMode: l.mode === "BUS" ? "BUS" : "RAIL",
           startTime: new Date(previous).toISOString(),
           endTime: l.startTime,
           durationSeconds: (start - previous) / 1000,
@@ -545,7 +547,7 @@ export async function transitRoutes(
         valid = false;
         break;
       }
-      if (!walking && !railModes.includes(l.mode)) {
+      if (!walking && !transitModes.includes(l.mode)) {
         valid = false;
         break;
       }
@@ -555,12 +557,14 @@ export async function transitRoutes(
             ? "TRANSFER"
             : "WALK"
           : "RIDE",
+        transitMode: walking ? undefined : l.mode === "BUS" ? "BUS" : "RAIL",
         geometry,
         distanceMeters: l.distance ?? 0,
         durationSeconds: l.duration,
         startTime: l.startTime,
         endTime: l.endTime,
         line:
+          (l.mode === "BUS" ? l.routeShortName?.trim() : undefined) ||
           l.routeLongName?.trim() ||
           l.routeShortName?.trim() ||
           l.displayName?.trim() ||
@@ -611,7 +615,7 @@ export async function transitRoutes(
   if (!routes.length)
     throw new NavError(
       "NO_ROUTE",
-      "没有包含完整步行指示、有效班次的铁路门到门路线",
+      "没有包含完整步行指示、有效班次的公共交通门到门路线",
     );
   return routes;
 }

@@ -19,6 +19,7 @@ function clock(value?: string) {
     : "";
 }
 function stationAccessOverview(leg: Route["legs"][number]): string[] {
+  if (leg.transitMode === "BUS") return [];
   const seen = new Set<string>();
   return [leg.fromStop, leg.toStop].flatMap((stop) => {
     const access = stop?.stationAccess;
@@ -42,10 +43,11 @@ export function transitLegOverview(leg: Route["legs"][number]): string {
   const to = leg.toStop?.name || leg.to;
   const minutes = `${Math.ceil(leg.durationSeconds / 60)}分钟`;
   const platform = leg.fromStop?.platform || leg.platform;
+  const boardingPoint = leg.transitMode === "BUS" ? "乘车点" : "站台";
   const platformText = platform
-    ? `${platform}站台`
+    ? `${platform}${boardingPoint}`
     : leg.fromStop?.scheduledPlatform
-      ? `计划${leg.fromStop.scheduledPlatform}站台`
+      ? `计划${leg.fromStop.scheduledPlatform}${boardingPoint}`
       : "";
   const departure = clock(
     leg.mode === "WAIT"
@@ -76,7 +78,7 @@ export function transitLegOverview(leg: Route["legs"][number]): string {
       .join("\n");
   if (leg.mode === "WAIT")
     return [
-      `${["候车", transitLineLabel(leg.line)].filter(Boolean).join(" ")} · ${minutes}`,
+      `${["候车", transitLineLabel(leg.line, leg.transitMode)].filter(Boolean).join(" ")} · ${minutes}`,
       from || to,
       [platformText, departure && `出发 ${departure}`]
         .filter(Boolean)
@@ -93,9 +95,9 @@ export function transitLegOverview(leg: Route["legs"][number]): string {
         stop.name,
         at,
         stop.platform
-          ? `${stop.platform}站台`
+          ? `${stop.platform}${boardingPoint}`
           : stop.scheduledPlatform
-            ? `计划${stop.scheduledPlatform}站台`
+            ? `计划${stop.scheduledPlatform}${boardingPoint}`
             : "",
         stop.cancelled && "停靠取消",
       ]
@@ -104,8 +106,8 @@ export function transitLegOverview(leg: Route["legs"][number]): string {
     });
   return [
     [
-      transitLineLabel(leg.line)
-        ? `乘坐 ${transitLineLabel(leg.line)}`
+      transitLineLabel(leg.line, leg.transitMode)
+        ? `乘坐 ${transitLineLabel(leg.line, leg.transitMode)}`
         : "乘车",
       leg.headsign && `往${leg.headsign}`,
       minutes,

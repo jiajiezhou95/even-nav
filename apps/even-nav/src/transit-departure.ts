@@ -5,8 +5,12 @@ import type {
 } from "../../../packages/core/src/navigation";
 import { distanceMeters } from "../../../packages/core/src/geometry";
 
-export function transitLineLabel(line?: string): string {
+export function transitLineLabel(
+  line?: string,
+  transitMode?: "BUS" | "RAIL",
+): string {
   const value = line?.normalize("NFKC").trim();
+  if (transitMode === "BUS") return value ? `公交 ${value}` : "公交";
   return !value || /^\d+$/.test(value) ? "" : value;
 }
 
@@ -57,7 +61,7 @@ export function departureText(
   }).format(departure.at);
   const seconds = Math.max(0, Math.ceil((departure.at - now) / 1000));
   const leg = departure.leg;
-  const line = transitLineLabel(leg.line);
+  const line = transitLineLabel(leg.line, leg.transitMode);
   const direction = leg.headsign?.trim()
     ? `往${leg.headsign.trim()}`
     : leg.toStop?.name || leg.to
@@ -208,6 +212,7 @@ function rideSequence(route: Route, from = 0) {
     .filter((leg) => leg.mode === "RIDE")
     .map((leg) =>
       [
+        leg.transitMode || "RAIL",
         leg.line,
         leg.agency,
         leg.fromStop?.name || leg.from,

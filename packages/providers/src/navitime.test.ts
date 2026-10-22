@@ -59,6 +59,40 @@ function gateway(url: URL) {
   };
 }
 describe("NAVITIME optional free Transport enrichment", () => {
+  it("skips train enrichment for numbered bus lines without spending quota", async () => {
+    const input = routes();
+    input[0].legs[0].transitMode = "BUS";
+    input[0].legs[0].line = "42";
+    const reserve = vi.fn(async () => {});
+    const fetcher = vi.fn(async () => Response.json(search()));
+    const [result] = await enrichNavitime(input, "synthetic", reserve, fetcher);
+    expect(result.legs).toEqual(input[0].legs);
+    expect(result.attribution).not.toContain("NAVITIME JAPAN");
+    expect(reserve).not.toHaveBeenCalled();
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it("enriches rail but leaves bus metadata untouched in mixed journeys", async () => {
+    const input = routes();
+    input[0].legs[0].transitMode = "RAIL";
+    const bus = structuredClone(input[0].legs[0]);
+    bus.transitMode = "BUS";
+    bus.line = "42";
+    input[0].legs.unshift(bus);
+    const reserve = vi.fn(async () => {});
+    const fetcher = vi.fn(async (raw: string | URL | Request) => {
+      const url = new URL(String(raw));
+      return Response.json(
+        url.pathname === "/transport_link" ? search() : gateway(url),
+      );
+    });
+    const [result] = await enrichNavitime(input, "synthetic", reserve, fetcher);
+    expect(result.legs[0]).toEqual(bus);
+    expect(result.legs[1].fromStop?.stationAccess?.gateways).toHaveLength(1);
+    expect(result.legs[1].toStop?.stationAccess?.gateways).toHaveLength(1);
+    // One line lookup and both gateway directions at each rail endpoint.
+    expect(fetcher).toHaveBeenCalledTimes(5);
+    expect(reserve).toHaveBeenCalledTimes(5);
+  });
   it.each([
     ["市ケ谷", "市ヶ谷"],
     ["菊川(東京都)", "菊川"],

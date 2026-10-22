@@ -284,6 +284,93 @@ describe("providers", () => {
           ]
         : undefined,
   });
+  it.each([["BUS"], ["BUS", "SUBWAY"], ["RAIL", "BUS"]])(
+    "retains bus and mixed transit itinerary %j",
+    async (...modes) => {
+      const legs = [leg("WALK", 0, 1)];
+      for (const [i, mode] of modes.entries()) {
+        legs.push({
+          ...leg(mode, 2 + i * 4, 4 + i * 4),
+          ...{
+            routeShortName: "42",
+            routeLongName: "Synthetic full line",
+          },
+        });
+        legs.push(leg("WALK", 4 + i * 4, 5 + i * 4));
+      }
+      const fetcher = mock({ itineraries: [{ duration: 1000, legs }] });
+      const [route] = await transitRoutes(
+        { ...trip, mode: "TRANSIT", routeProvider: "TRANSITOUS" },
+        "test",
+        fetcher,
+      );
+      const rides = route.legs.filter((l) => l.mode === "RIDE");
+      expect(rides.map((l) => l.transitMode)).toEqual(
+        modes.map((m) => (m === "BUS" ? "BUS" : "RAIL")),
+      );
+      expect(rides.map((l) => l.line)).toEqual(
+        modes.map((m) => (m === "BUS" ? "42" : "Synthetic full line")),
+      );
+      expect(
+        route.legs.filter((l) => l.mode === "WAIT").map((l) => l.transitMode),
+      ).toEqual(rides.map((l) => l.transitMode));
+      expect(route.legs.at(-1)?.mode).toBe("WALK");
+      expect(
+        route.legs
+          .filter((l) => l.mode === "WALK" || l.mode === "TRANSFER")
+          .every((l) => l.transitMode === undefined),
+      ).toBe(true);
+      const requested = new URL(String(vi.mocked(fetcher).mock.calls[0][0]));
+      expect(requested.searchParams.get("transitModes")?.split(",")).toContain(
+        "BUS",
+      );
+      expect(requested.searchParams.get("transitModes")?.split(",")).toContain(
+        "SUBWAY",
+      );
+    },
+  );
+  it.each([undefined, "42"])(
+    "preserves missing or numeric bus line %s",
+    async (routeShortName) => {
+      const [route] = await transitRoutes(
+        { ...trip, mode: "TRANSIT", routeProvider: "TRANSITOUS" },
+        "test",
+        mock({
+          itineraries: [
+            {
+              duration: 240,
+              legs: [
+                leg("WALK", 0, 1),
+                { ...leg("BUS", 1, 3), routeShortName },
+                leg("WALK", 3, 4),
+              ],
+            },
+          ],
+        }),
+      );
+      expect(route.legs[1]).toMatchObject({ mode: "RIDE", transitMode: "BUS" });
+      expect(route.legs[1].line).toBe(routeShortName);
+    },
+  );
+  it.each(["COACH", "FERRY", "UNKNOWN"])(
+    "does not admit unsupported mode %s alongside bus",
+    async (mode) => {
+      await expect(
+        transitRoutes(
+          { ...trip, mode: "TRANSIT", routeProvider: "TRANSITOUS" },
+          "test",
+          mock({
+            itineraries: [
+              {
+                duration: 240,
+                legs: [leg("BUS", 0, 1), leg(mode, 1, 3), leg("WALK", 3, 4)],
+              },
+            ],
+          }),
+        ),
+      ).rejects.toMatchObject({ code: "NO_ROUTE" });
+    },
+  );
   it.each([1, 2, 3])("retains %i rides, waiting and walking", async (n) => {
     const legs = [leg("WALK", 0, 1)];
     for (let i = 0; i < n; i++) {

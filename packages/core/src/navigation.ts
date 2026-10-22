@@ -233,7 +233,7 @@ export class NavigationSession {
       this.state.replanNeeded = true;
       throw new NavError(
         "NO_ROUTE",
-        "预览已过期、起点移动或列车已发车，请重新查询",
+        "预览已过期、起点移动或班次已发车，请重新查询",
       );
     }
     this.controller.abort();

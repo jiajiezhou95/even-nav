@@ -101,7 +101,7 @@ describe("request and navigation lifecycle", () => {
       startTime: new Date(now - 1000).toISOString(),
     };
     expect(() => ready(route([ride])).start("synthetic", fix(), now)).toThrow(
-      /列车/,
+      /班次/,
     );
   });
   it("defensively owns accepted routes and snapshot", () => {

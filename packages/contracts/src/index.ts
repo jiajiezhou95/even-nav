@@ -93,6 +93,7 @@ export interface RouteStop {
 }
 export interface RouteLeg {
   mode: "WALK" | "DRIVE" | "WAIT" | "RIDE" | "TRANSFER";
+  transitMode?: "BUS" | "RAIL";
   geometry: Coordinate[];
   steps: RouteStep[];
   distanceMeters: number;

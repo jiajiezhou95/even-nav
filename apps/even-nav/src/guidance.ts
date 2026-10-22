@@ -104,7 +104,7 @@ export function stationAccessGuidance(
       : undefined;
   };
   if (leg.mode === "RIDE") {
-    if (state.boarded || leg.staySeated) return;
+    if (state.boarded || leg.staySeated || leg.transitMode === "BUS") return;
     const entry = gateway(leg.fromStop, "WALK_ORIGIN");
     return entry ? `建议入口 ${entry}` : undefined;
   }
@@ -112,12 +112,13 @@ export function stationAccessGuidance(
   const previous = adjacentRide(-1),
     next = adjacentRide(1);
   const exit =
-    leg.mode !== "WAIT" && !next?.staySeated
+    leg.mode !== "WAIT" && !next?.staySeated && previous?.transitMode !== "BUS"
       ? gateway(previous?.toStop, "WALK_DESTINATION")
       : undefined;
-  const entry = !next?.staySeated
-    ? gateway(next?.fromStop, "WALK_ORIGIN")
-    : undefined;
+  const entry =
+    !next?.staySeated && next?.transitMode !== "BUS"
+      ? gateway(next?.fromStop, "WALK_ORIGIN")
+      : undefined;
   return (
     [
       exit && `建议出口 ${exit}`,
@@ -141,14 +142,15 @@ export function transitPhaseDetail(state: NavigationState): string {
   const ride =
     leg.mode === "WAIT" ? state.route?.legs[state.legIndex + 1] : leg;
   const alighting = leg.mode === "WAIT" ? ride?.to : leg.to;
+  const transitMode = leg.transitMode || ride?.transitMode;
   return [
-    transitLineLabel(leg.line || ride?.line),
+    transitLineLabel(leg.line || ride?.line, transitMode),
     (leg.headsign || ride?.headsign) &&
       `方向 ${leg.headsign || ride?.headsign}`,
     leg.from && `${leg.mode === "TRANSFER" ? "从" : "上车站 "}${leg.from}`,
     alighting && `${leg.mode === "TRANSFER" ? "前往" : "下车站 "}${alighting}`,
     (leg.platform || (leg.mode === "WAIT" ? ride?.platform : undefined)) &&
-      `${leg.platform || ride?.platform}站台`,
+      `${leg.platform || ride?.platform}${transitMode === "BUS" ? "乘车点" : "站台"}`,
     leg.mode === "TRANSFER" && `换乘步行 ${Math.round(leg.distanceMeters)}米`,
     leg.staySeated && "直通无需下车",
   ]
@@ -204,9 +206,10 @@ export function guidanceView(
   const access = stationAccessGuidance(state);
   if (leg.mode === "WAIT") {
     const ride = state.route?.legs[state.legIndex + 1];
+    const transitMode = leg.transitMode || ride?.transitMode;
     return {
       ...plain(
-        ["候车", transitLineLabel(leg.line || ride?.line)]
+        ["候车", transitLineLabel(leg.line || ride?.line, transitMode)]
           .filter(Boolean)
           .join(" "),
       ),
@@ -214,7 +217,7 @@ export function guidanceView(
       distance: [
         leg.headsign || ride?.headsign,
         (leg.platform || ride?.platform) &&
-          `${leg.platform || ride?.platform}站台`,
+          `${leg.platform || ride?.platform}${transitMode === "BUS" ? "乘车点" : "站台"}`,
       ]
         .filter(Boolean)
         .join(" · "),
@@ -227,14 +230,18 @@ export function guidanceView(
   if (leg.mode === "RIDE")
     return {
       ...plain(
-        [state.boarded ? "乘坐" : "待上车", transitLineLabel(leg.line)]
+        [
+          state.boarded ? "乘坐" : "待上车",
+          transitLineLabel(leg.line, leg.transitMode),
+        ]
           .filter(Boolean)
           .join(" "),
       ),
       icon: "transport",
       distance: [
         leg.headsign && `往${leg.headsign}`,
-        leg.platform && `${leg.platform}站台`,
+        leg.platform &&
+          `${leg.platform}${leg.transitMode === "BUS" ? "乘车点" : "站台"}`,
       ]
         .filter(Boolean)
         .join(" · "),
@@ -254,7 +261,11 @@ export function guidanceView(
       ...plain(`换乘${leg.to ? ` ${leg.to}` : ""}`),
       distance: `剩余 ${Math.round(Math.max(0, leg.distanceMeters - state.progressMeters))}米`,
       next:
-        [transitLineLabel(leg.line), leg.platform && `${leg.platform}站台`]
+        [
+          transitLineLabel(leg.line, leg.transitMode),
+          leg.platform &&
+            `${leg.platform}${leg.transitMode === "BUS" ? "乘车点" : "站台"}`,
+        ]
           .filter(Boolean)
           .join(" · ") || undefined,
       access,

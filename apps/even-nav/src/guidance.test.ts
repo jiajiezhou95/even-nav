@@ -97,6 +97,46 @@ function accessState() {
 }
 
 describe("phase-specific station access guidance", () => {
+  it("stops entrance lookup at bus legs and preserves only the adjacent rail gateway on mixed transfers", () => {
+    const state = accessState();
+    state.route!.legs[2].transitMode = "BUS";
+    expect(guidanceView(state, "TRANSIT", now).access).toBeUndefined();
+    state.legIndex = 1;
+    expect(guidanceView(state, "TRANSIT", now).access).toBeUndefined();
+    state.legIndex = 2;
+    expect(guidanceView(state, "TRANSIT", now).access).toBeUndefined();
+    state.legIndex = 3;
+    expect(guidanceView(state, "TRANSIT", now).access).toBe("建议入口 C1口");
+    state.route!.legs[2].transitMode = "RAIL";
+    state.route!.legs[4].transitMode = "BUS";
+    expect(guidanceView(state, "TRANSIT", now).access).toBe("建议出口 B2口");
+    state.legIndex = 5;
+    expect(guidanceView(state, "TRANSIT", now).access).toBeUndefined();
+  });
+  it("shows bus identity, direction and boarding stop in live phone and shared G2 guidance", () => {
+    const state = accessState();
+    Object.assign(state.route!.legs[2], {
+      transitMode: "BUS",
+      line: "１２",
+      headsign: "合成总站",
+      platform: "2",
+    });
+    state.legIndex = 1;
+    expect(guidanceView(state, "TRANSIT", now)).toMatchObject({
+      action: "候车 公交 12",
+      distance: "合成总站 · 2乘车点",
+      next: "上车 甲站",
+    });
+    expect(transitPhaseDetail(state)).toContain("公交 12");
+    state.legIndex = 2;
+    state.boarded = true;
+    expect(conciseInstruction(state, "TRANSIT", now)).toContain(
+      "乘坐 公交 12\n往合成总站 · 2乘车点",
+    );
+    expect(conciseInstruction(state, "TRANSIT", now)).toContain(
+      "下一步：下车 乙站",
+    );
+  });
   it("shows recommended entry while approaching and waiting, keeping turns and remaining distance", () => {
     const state = accessState();
     const view = guidanceView(state, "TRANSIT", now);
